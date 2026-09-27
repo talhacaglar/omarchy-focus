@@ -60,6 +60,7 @@ class PomodoroService:
             started_at=parse_dt(raw.get("started_at")),
             ends_at=parse_dt(raw.get("ends_at")),
             paused_at=parse_dt(raw.get("paused_at")),
+            paused_seconds=int(raw.get("paused_seconds", 0)),
             boot_id=str(raw.get("boot_id")) if raw.get("boot_id") else None,
             remaining_seconds=int(raw.get("remaining_seconds", 0)),
             task_id=raw.get("task_id"),
@@ -76,6 +77,7 @@ class PomodoroService:
             "started_at": to_iso(snapshot.started_at),
             "ends_at": to_iso(snapshot.ends_at),
             "paused_at": to_iso(snapshot.paused_at),
+            "paused_seconds": snapshot.paused_seconds,
             "boot_id": snapshot.boot_id,
             "remaining_seconds": snapshot.remaining_seconds,
             "task_id": snapshot.task_id,
@@ -254,6 +256,8 @@ class PomodoroService:
         if snapshot.phase != SessionPhase.PAUSED:
             raise PomodoroError("No paused session to resume")
         now = utc_now()
+        if snapshot.paused_at:
+            snapshot.paused_seconds += elapsed_seconds(snapshot.paused_at, now)
         snapshot.phase = SessionPhase.RUNNING
         snapshot.started_at = snapshot.started_at or now
         snapshot.paused_at = None
@@ -353,7 +357,7 @@ class PomodoroService:
             effective_end = snapshot.ends_at
         elif snapshot.paused_at:
             effective_end = snapshot.paused_at
-        duration = elapsed_seconds(snapshot.started_at, effective_end)
+        duration = max(0, elapsed_seconds(snapshot.started_at, effective_end) - snapshot.paused_seconds)
         self.db.execute(
             """
             INSERT INTO pomodoro_sessions (

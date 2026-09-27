@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -126,6 +127,29 @@ class ServiceFlowTest(unittest.TestCase):
         self.assertEqual(resumed.phase.value, "running")
         stopped = self.pomodoro.stop(reason="test complete")
         self.assertEqual(stopped.phase.value, "idle")
+
+    def test_pomodoro_statistics_exclude_multiple_pauses(self) -> None:
+        started = datetime(2026, 9, 27, 10, tzinfo=UTC)
+        with patch("omarchy_focus.services.pomodoro.utc_now", return_value=started):
+            self.pomodoro.start(minutes=15, auto_focus=False)
+        for pause_minute, resume_minute, seconds_left in [(5, 10, 600), (15, 20, 300)]:
+            with (
+                patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=pause_minute)),
+                patch("omarchy_focus.services.pomodoro.remaining_seconds", return_value=seconds_left),
+            ):
+                self.pomodoro.pause()
+            with patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=resume_minute)):
+                self.pomodoro.resume()
+        with (
+            patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=25)),
+            patch("omarchy_focus.services.pomodoro.remaining_seconds", return_value=0),
+            patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+            patch("omarchy_focus.services.pomodoro.focus_app_tui"),
+        ):
+            self.pomodoro.tick()
+        row = self.db.fetchone("SELECT duration_seconds, completed FROM pomodoro_sessions")
+        self.assertEqual(row["duration_seconds"], 15 * 60)
+        self.assertEqual(row["completed"], 1)
 
     def test_pomodoro_start_rolls_back_when_focus_fails(self) -> None:
         # Intentionally assert on a broad Exception: the point of this test is

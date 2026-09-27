@@ -67,6 +67,7 @@ class PomodoroStateSnapshot:
     started_at: datetime | None = None
     ends_at: datetime | None = None
     paused_at: datetime | None = None
+    paused_seconds: int = 0
     boot_id: str | None = None
     remaining_seconds: int = 0
     task_id: int | None = None
