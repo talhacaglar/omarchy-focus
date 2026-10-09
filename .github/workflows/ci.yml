@@ -30,7 +30,11 @@ jobs:
 
       - name: Mypy
         run: mypy
-        continue-on-error: true
+
+      - name: Set up Node (QML model tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Run tests
         run: pytest -q

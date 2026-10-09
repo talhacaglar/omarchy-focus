@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 from datetime import timedelta
+from typing import Any
 
 from ..database import Database
 from ..exceptions import PomodoroError
@@ -44,25 +45,37 @@ class PomodoroService:
         self.tasks = tasks
         self.focus = focus
 
-    def _load_raw(self) -> dict[str, object] | None:
+    def _load_raw(self) -> dict[str, Any] | None:
         row = self.db.get_state(self.STATE_KEY)
         return json.loads(row["value_json"]) if row else None
 
-    def _save_raw(self, payload: dict[str, object]) -> None:
+    def _save_raw(self, payload: dict[str, Any]) -> None:
         self.db.upsert_state(self.STATE_KEY, json_dumps(payload))
 
-    def _raw_to_snapshot(self, raw: dict[str, object] | None) -> PomodoroStateSnapshot:
+    def _raw_to_snapshot(self, raw: dict[str, Any] | None) -> PomodoroStateSnapshot:
         if not raw:
             return PomodoroStateSnapshot()
+        phase = SessionPhase(raw["phase"])
+        started_at = parse_dt(raw.get("started_at"))
+        ends_at = parse_dt(raw.get("ends_at"))
+        remaining = int(raw.get("remaining_seconds", 0))
+        if phase == SessionPhase.RUNNING and ends_at:
+            # Derived on read so callers never need to persist a countdown.
+            remaining = remaining_seconds(ends_at)
+        total = int(raw.get("total_seconds") or 0)
+        if not total and started_at and ends_at:
+            # State written before total_seconds existed.
+            total = elapsed_seconds(started_at, ends_at)
         return PomodoroStateSnapshot(
-            phase=SessionPhase(raw["phase"]),
+            phase=phase,
             session_type=SessionType(raw["session_type"]) if raw.get("session_type") else None,
-            started_at=parse_dt(raw.get("started_at")),
-            ends_at=parse_dt(raw.get("ends_at")),
+            started_at=started_at,
+            ends_at=ends_at,
             paused_at=parse_dt(raw.get("paused_at")),
-            paused_seconds=int(raw.get("paused_seconds", 0)),
             boot_id=str(raw.get("boot_id")) if raw.get("boot_id") else None,
-            remaining_seconds=int(raw.get("remaining_seconds", 0)),
+            remaining_seconds=remaining,
+            total_seconds=max(total, remaining),
+            paused_seconds=int(raw.get("paused_seconds") or 0),
             task_id=raw.get("task_id"),
             task_title=raw.get("task_title"),
             cycle_count=int(raw.get("cycle_count", 0)),
@@ -70,16 +83,17 @@ class PomodoroService:
             strict_focus=bool(raw.get("strict_focus", False)),
         )
 
-    def _snapshot_to_raw(self, snapshot: PomodoroStateSnapshot) -> dict[str, object]:
+    def _snapshot_to_raw(self, snapshot: PomodoroStateSnapshot) -> dict[str, Any]:
         return {
             "phase": snapshot.phase.value,
             "session_type": snapshot.session_type.value if snapshot.session_type else None,
             "started_at": to_iso(snapshot.started_at),
             "ends_at": to_iso(snapshot.ends_at),
             "paused_at": to_iso(snapshot.paused_at),
-            "paused_seconds": snapshot.paused_seconds,
             "boot_id": snapshot.boot_id,
             "remaining_seconds": snapshot.remaining_seconds,
+            "total_seconds": snapshot.total_seconds,
+            "paused_seconds": snapshot.paused_seconds,
             "task_id": snapshot.task_id,
             "task_title": snapshot.task_title,
             "cycle_count": snapshot.cycle_count,
@@ -87,24 +101,37 @@ class PomodoroService:
             "strict_focus": snapshot.strict_focus,
         }
 
+    # A gap this long between finished work sessions starts a fresh cycle, so
+    # yesterday's last pomodoro doesn't count toward today's long break.
+    CYCLE_RESET_AFTER = timedelta(hours=2)
+
     def _current_streak(self) -> int:
         row = self.db.get_state(self.STREAK_KEY)
         if not row:
             return 0
         payload = json.loads(row["value_json"])
+        updated_at = parse_dt(payload.get("updated_at"))
+        if updated_at and utc_now() - updated_at > self.CYCLE_RESET_AFTER:
+            return 0
         return int(payload.get("count", 0))
 
     def _set_streak(self, value: int) -> None:
-        self.db.upsert_state(self.STREAK_KEY, json_dumps({"count": value}))
+        self.db.upsert_state(self.STREAK_KEY, json_dumps({"count": value, "updated_at": to_iso(utc_now())}))
 
-    def _load_pending_break(self) -> dict[str, object] | None:
+    def _next_break(self, cycle: int) -> tuple[SessionType, int]:
+        every = int(self.settings.get("pomodoro_long_break_every") or 0)
+        if every > 0 and cycle > 0 and cycle % every == 0:
+            return SessionType.LONG_BREAK, int(self.settings.get("pomodoro_long_break_minutes"))
+        return SessionType.SHORT_BREAK, int(self.settings.get("pomodoro_short_break_minutes"))
+
+    def _load_pending_break(self) -> dict[str, Any] | None:
         row = self.db.get_state(self.PENDING_BREAK_KEY)
         return json.loads(row["value_json"]) if row else None
 
-    def _save_pending_break(self, payload: dict[str, object]) -> None:
+    def _save_pending_break(self, payload: dict[str, Any]) -> None:
         self.db.upsert_state(self.PENDING_BREAK_KEY, json_dumps(payload))
 
-    def pending_break(self) -> dict[str, object] | None:
+    def pending_break(self) -> dict[str, Any] | None:
         payload = self._load_pending_break()
         if not payload:
             return None
@@ -121,7 +148,7 @@ class PomodoroService:
     def snapshot(self) -> PomodoroStateSnapshot:
         return self._raw_to_snapshot(self._load_raw())
 
-    def _clear_if_rebooted(self, raw: dict[str, object] | None) -> PomodoroStateSnapshot | None:
+    def _clear_if_rebooted(self, raw: dict[str, Any] | None) -> PomodoroStateSnapshot | None:
         if not raw:
             self.pending_break()
             return None
@@ -178,6 +205,7 @@ class PomodoroService:
             ends_at=ends_at,
             boot_id=current_boot_id(),
             remaining_seconds=duration_minutes * 60,
+            total_seconds=duration_minutes * 60,
             task_id=task_id,
             task_title=task_title,
             cycle_count=self._current_streak(),
@@ -223,6 +251,7 @@ class PomodoroService:
             ends_at=ends_at,
             boot_id=current_boot_id(),
             remaining_seconds=duration_minutes * 60,
+            total_seconds=duration_minutes * 60,
             task_id=pending.get("task_id"),
             task_title=pending.get("task_title"),
             cycle_count=int(pending.get("cycle_count", self._current_streak())),
@@ -256,10 +285,10 @@ class PomodoroService:
         if snapshot.phase != SessionPhase.PAUSED:
             raise PomodoroError("No paused session to resume")
         now = utc_now()
-        if snapshot.paused_at:
-            snapshot.paused_seconds += elapsed_seconds(snapshot.paused_at, now)
         snapshot.phase = SessionPhase.RUNNING
         snapshot.started_at = snapshot.started_at or now
+        if snapshot.paused_at:
+            snapshot.paused_seconds += elapsed_seconds(snapshot.paused_at, now)
         snapshot.paused_at = None
         snapshot.ends_at = now + timedelta(seconds=snapshot.remaining_seconds)
         snapshot.boot_id = current_boot_id()
@@ -280,6 +309,12 @@ class PomodoroService:
         poke_status_bar()
         return PomodoroStateSnapshot()
 
+    def skip_break(self) -> None:
+        if not self.pending_break():
+            raise PomodoroError("No break is waiting")
+        self.clear_pending_break()
+        poke_status_bar()
+
     def toggle(self) -> PomodoroStateSnapshot:
         snapshot = self.status()
         if snapshot.phase == SessionPhase.IDLE:
@@ -294,18 +329,16 @@ class PomodoroService:
         snapshot = self._raw_to_snapshot(raw)
         if snapshot.phase != SessionPhase.RUNNING or not snapshot.ends_at:
             return snapshot
-        remaining = remaining_seconds(snapshot.ends_at)
-        if remaining > 0:
-            snapshot.remaining_seconds = remaining
-            self._save_raw(self._snapshot_to_raw(snapshot))
+        if snapshot.remaining_seconds > 0:
+            # Nothing to persist: the countdown is derived from ends_at. Not
+            # writing here keeps bar refreshes read-only.
             return snapshot
 
         if snapshot.session_type == SessionType.WORK:
             self._record_session(snapshot, completed=True, interrupted=False, note="work complete")
             streak = self._current_streak() + 1
             self._set_streak(streak)
-            break_type = SessionType.SHORT_BREAK
-            minutes = int(self.settings.get("pomodoro_short_break_minutes"))
+            break_type, minutes = self._next_break(streak)
             self.db.delete_state(self.STATE_KEY)
             self._save_pending_break(
                 {
@@ -324,11 +357,12 @@ class PomodoroService:
                     self.focus.stop(force=True, interactive=False, reason="Work session complete")
             notify(
                 "Pomodoro complete",
-                f"{minutes} minute break is ready",
+                f"{minutes} minute {'long ' if break_type == SessionType.LONG_BREAK else ''}break is ready",
                 enabled=self.settings.get("notifications_enabled"),
             )
             play_alert_sound()
-            focus_app_tui()
+            if self.settings.get("open_app_on_complete"):
+                focus_app_tui()
             poke_status_bar()
             return PomodoroStateSnapshot()
 
@@ -370,7 +404,7 @@ class PomodoroService:
                 snapshot.session_type.value,
                 snapshot.phase.value,
                 to_iso(snapshot.started_at),
-                to_iso(utc_now()),
+                to_iso(effective_end),
                 duration,
                 1 if completed else 0,
                 1 if interrupted else 0,

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .paths import DB_PATH, ensure_app_dirs
+from .paths import DB_PATH
 from .utils import json_dumps, to_iso, utc_now
 
 DEFAULT_BLOCKED_SITES = (
@@ -31,12 +31,15 @@ class Database:
         self.path = path
 
     def initialize(self) -> None:
-        ensure_app_dirs()
         with self.connection() as conn:
+            current = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if current >= SCHEMA_VERSION:
+                # Fast path: every CLI call and bar refresh lands here, so an
+                # up-to-date database skips the DDL (and its write lock).
+                return
             conn.executescript(
                 """
                 PRAGMA journal_mode = WAL;
-                PRAGMA foreign_keys = ON;
 
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,14 +113,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_focus_started ON focus_sessions(started_at);
                 """
             )
-            created_at = to_iso(utc_now())
-            conn.executemany(
-                """
-                INSERT OR IGNORE INTO blocked_sites (domain, enabled, created_at, source)
-                VALUES (?, 1, ?, 'default')
-                """,
-                [(domain, created_at) for domain in DEFAULT_BLOCKED_SITES],
-            )
+            if current == 0:
+                # Seed once. Re-seeding on every start would resurrect default
+                # sites the user deliberately removed.
+                created_at = to_iso(utc_now())
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO blocked_sites (domain, enabled, created_at, source)
+                    VALUES (?, 1, ?, 'default')
+                    """,
+                    [(domain, created_at) for domain in DEFAULT_BLOCKED_SITES],
+                )
             self._run_migrations(conn)
 
     def _run_migrations(self, conn: sqlite3.Connection) -> None:
@@ -137,8 +143,10 @@ class Database:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
+        # Per-connection setting: without it ON DELETE SET NULL never fires.
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from rich.markup import escape
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -14,6 +15,7 @@ from textual.timer import Timer
 from textual.widgets import Button, DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from ..bootstrap import build_services
+from ..charts import color_bar, peak_window, render_heatmap, render_hours, week_columns
 from ..models import (
     FocusStateSnapshot,
     PomodoroStateSnapshot,
@@ -27,11 +29,9 @@ from ..paths import APP_NAME
 from ..utils import (
     format_datetime,
     minutes_to_label,
-    progress_bar,
     register_tui_window,
     remaining_seconds,
     seconds_to_clock,
-    sparkline,
 )
 from .dialogs import (
     BlockedSitesScreen,
@@ -103,11 +103,13 @@ SETTING_LABELS = {
     "strict_mode_default": "Strict focus",
     "theme_variant": "Theme",
     "bar_output_mode": "Bar output",
+    "daily_goal_minutes": "Daily goal (min)",
+    "open_app_on_complete": "Open app when done",
 }
 
 
 class OmarchyFocusApp(App[None]):
-    """Clar Focus premium TUI."""
+    """Omarchy Focus terminal app."""
 
     CSS_PATH = "app.tcss"
     TITLE = APP_NAME
@@ -150,8 +152,11 @@ class OmarchyFocusApp(App[None]):
         self._cached_pomodoro = PomodoroStateSnapshot()
         self._cached_focus = FocusStateSnapshot()
         self._cached_stats = StatsSnapshot()
+        self._cached_heatmap: list[tuple[str, int]] = []
+        self._cached_hours: list[int] = [0] * 24
         self._cached_pending_break: dict[str, object] | None = None
         self._cached_pending_count = 0
+        self._cached_enabled_sites = 0
         self._cached_done_today = 0
         self._task_row_map: dict[str, list[int]] = {}
         self._site_row_map: list[str] = []
@@ -273,7 +278,10 @@ class OmarchyFocusApp(App[None]):
         """Refresh slower-changing data and table contents."""
         self._sync_live_cache()
         self._cached_stats = self.services.stats.snapshot()
+        self._cached_heatmap = self.services.stats.daily_minutes(days=17 * 7)
+        self._cached_hours = self.services.stats.hourly_minutes(days=30)
         self._cached_pending_count = self.services.tasks.count_pending()
+        self._cached_enabled_sites = len(self.services.focus.list_sites(enabled_only=True))
         self._cached_done_today = self.services.tasks.count_done_today()
         self._refresh_top_chips()
         self._refresh_dashboard()
@@ -383,25 +391,25 @@ class OmarchyFocusApp(App[None]):
             return None
 
     def _refresh_dashboard(self) -> None:
-        upcoming_tasks = self.services.tasks.list_tasks(
-            TaskFilters(sort_by="priority_desc", include_archived=False)
-        )[:8]
+        # Only open work belongs in "Up next"; finished tasks live in Tasks.
+        upcoming_tasks = self.services.tasks.list_open(limit=8)
         self._populate_task_table("dashboard-tasks", upcoming_tasks)
         stats = self._cached_stats
         self._refresh_dashboard_now()
+        goal = int(self.services.settings.get("daily_goal_minutes") or 0) or 150
         self.query_one("#dashboard-day", Static).update(
             "\n".join(
                 [
                     "TODAY",
                     "",
-                    f"{self._cached_done_today} tasks finished",
-                    f"{stats.today_completed_pomodoros} focus cycles",
-                    f"{stats.today_focus_minutes} minutes protected",
+                    color_bar(stats.today_focus_minutes, goal, width=24),
+                    f"{minutes_to_label(stats.today_focus_minutes)} of {minutes_to_label(goal)} goal",
+                    f"{self._cached_done_today} tasks  ·  {stats.today_completed_pomodoros} focus cycles",
                 ]
             )
         )
         self._refresh_dashboard_focus()
-        rhythm = sparkline([minutes for _, minutes in stats.focus_days])
+        rhythm = week_columns([minutes for _, minutes in stats.focus_days])
         labels = "  ".join(day[:2] for day, _ in stats.focus_days)
         self.query_one("#dashboard-stats", Static).update(
             "\n".join(
@@ -433,9 +441,7 @@ class OmarchyFocusApp(App[None]):
             estimate = minutes_to_label(task.estimated_minutes) if task else "50m default"
             state = f"Ready  ·  {estimate}"
             hint = "s start this task  ·  a capture another"
-        self.query_one("#dashboard-now", Static).update(
-            "\n".join([phase, "", task_title, "", state, hint])
-        )
+        self.query_one("#dashboard-now", Static).update("\n".join([phase, "", task_title, "", state, hint]))
 
     def _refresh_dashboard_focus(self) -> None:
         focus = self._cached_focus
@@ -450,7 +456,8 @@ class OmarchyFocusApp(App[None]):
                     "",
                     f"{'ACTIVE' if focus.active else 'Off'}  ·  "
                     f"{remaining if focus.active else 'press m to enable'}",
-                    f"{len(focus.blocked_sites)} sites  ·  {'strict' if focus.strict_mode else 'adaptive'}",
+                    f"{len(focus.blocked_sites) if focus.active else self._cached_enabled_sites} sites  ·  "
+                    f"{'strict' if focus.strict_mode else 'adaptive'}",
                 ]
             )
         )
@@ -595,35 +602,41 @@ class OmarchyFocusApp(App[None]):
                     f"Tasks today        {stats.completed_tasks_today}",
                     f"Tasks this week    {stats.completed_tasks_week}",
                     f"Streak             {stats.streak_days} day(s)",
+                    f"Finished sessions  {self._finish_rate(stats)}",
                 ]
             )
         )
         chart_values = [minutes for _, minutes in stats.focus_days]
-        chart = sparkline(chart_values)
-        labels = " ".join(day[:2] for day, _ in stats.focus_days)
+        goal = int(self.services.settings.get("daily_goal_minutes") or 0) or 150
+        peak = peak_window(self._cached_hours)
         self.query_one("#stats-charts", Static).update(
             "\n".join(
                 [
-                    "Weekly Rhythm",
+                    "Focus Heatmap · 17 weeks",
                     "",
-                    chart,
-                    labels,
+                    render_heatmap(self._cached_heatmap, goal, style="rich"),
                     "",
-                    "Daily load",
-                    " ".join(
-                        f"{day} {progress_bar(minutes, max(chart_values) or 1, width=8)} {minutes:>3}m"
-                        for day, minutes in stats.focus_days
-                    ),
+                    "Focus by hour · 30 days",
+                    render_hours(self._cached_hours, style="rich"),
+                    f"Peak window {peak[0]:02d}:00–{(peak[0] + 2) % 24:02d}:00" if peak else "",
                 ]
             )
         )
         top_tasks = (
-            "\n".join(f"{title[:22]:<22} {minutes:>4}m" for title, minutes in stats.top_task_focus)
+            "\n".join(f"{escape(title[:22]):<22} {minutes:>4}m" for title, minutes in stats.top_task_focus)
             or "No task-linked sessions yet."
         )
+        week_peak = max(chart_values) or 1
         self.query_one("#stats-tasks", Static).update(
             "\n".join(
                 [
+                    "Last 7 Days",
+                    "",
+                    *(
+                        f"{day[:2]}  {color_bar(minutes, week_peak, width=14)}  {minutes_to_label(minutes)}"
+                        for day, minutes in stats.focus_days
+                    ),
+                    "",
                     "Top Tasks",
                     "",
                     top_tasks,
@@ -643,6 +656,11 @@ class OmarchyFocusApp(App[None]):
                 ]
             )
         )
+
+    @staticmethod
+    def _finish_rate(stats: StatsSnapshot) -> str:
+        attempted = stats.completed_sessions_week + stats.interrupted_sessions_week
+        return f"{round(100 * stats.completed_sessions_week / attempted)}%" if attempted else "—"
 
     def _refresh_settings(self) -> None:
         values = self.services.settings.all()
@@ -849,7 +867,9 @@ class OmarchyFocusApp(App[None]):
         value: Any = result
         if isinstance(current, int) and not isinstance(current, bool):
             if not result.isdigit() or int(result) < 1:
-                self.notify("Enter a whole number greater than zero.", title="Setting not changed", severity="error")
+                self.notify(
+                    "Enter a whole number greater than zero.", title="Setting not changed", severity="error"
+                )
                 return
             value = int(result)
         elif key == "default_view" and result not in {

@@ -1,15 +1,15 @@
 {
-  "custom/clar-focus": {
-    "exec": "~/.local/bin/clar-focus-waybar status",
+  "custom/omarchy-focus": {
+    "exec": "~/.local/bin/omarchy-focus-waybar status",
     "return-type": "json",
     // Countdown stays smooth at a 2s poll; the app also pushes instant
     // updates via SIGRTMIN+12 on every state change, so a lower interval is
     // wasted CPU/battery when idle.
     "interval": 2,
     "signal": 12,
-    "on-click": "~/.local/bin/clar-focus-waybar open",
-    "on-click-right": "~/.local/bin/clar-focus-waybar toggle-pomodoro",
-    "on-click-middle": "~/.local/bin/clar-focus-waybar toggle-focus",
+    "on-click": "~/.local/bin/omarchy-focus-waybar open",
+    "on-click-right": "~/.local/bin/omarchy-focus-waybar toggle-pomodoro",
+    "on-click-middle": "~/.local/bin/omarchy-focus-waybar toggle-focus",
     "tooltip": true
   }
 }

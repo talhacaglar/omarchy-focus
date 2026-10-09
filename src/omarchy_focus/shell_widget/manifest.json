@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy-focus",
+  "name": "Omarchy Focus",
+  "version": "0.2.0",
+  "author": "Talha Caglar",
+  "license": "MIT",
+  "description": "Pomodoro timer, task queue and site blocker in the Omarchy bar. Needs the omarchy-focus CLI.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omarchy Focus",
+    "description": "Live countdown with a popup for tasks, breaks, the site guard and focus stats.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "showIdleCount": true,
+      "refreshIntervalSec": 30,
+      "guardMinutes": 50
+    },
+    "schema": [
+      {
+        "key": "showIdleCount",
+        "type": "boolean",
+        "label": "Show open task count when idle",
+        "defaultValue": true
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Background refresh (seconds)",
+        "min": 10,
+        "max": 600,
+        "step": 5,
+        "defaultValue": 30
+      },
+      {
+        "key": "guardMinutes",
+        "type": "integer",
+        "label": "Site guard length (minutes)",
+        "min": 5,
+        "max": 240,
+        "step": 5,
+        "defaultValue": 50
+      }
+    ]
+  }
+}

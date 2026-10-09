@@ -43,6 +43,8 @@ class TaskService:
         due_at: str | None = None,
         status: str = "pending",
     ) -> Task:
+        if not title.strip():
+            raise ValueError("Task title cannot be empty")
         now = utc_now()
         due = parse_user_datetime(due_at) if isinstance(due_at, str) else due_at
         tags_json = json.dumps(coerce_tags(tags))
@@ -156,13 +158,9 @@ class TaskService:
             if estimated_minutes is not None
             else task.estimated_minutes
         )
-        due = (
-            None
-            if clear_due_at
-            else parse_user_datetime(due_at)
-            if due_at is not None
-            else task.due_at
-        )
+        due = None if clear_due_at else parse_user_datetime(due_at) if due_at is not None else task.due_at
+        if title is not None and not title.strip():
+            raise ValueError("Task title cannot be empty")
         fields = {
             "title": title.strip() if title is not None else task.title,
             "description": description.strip() if description is not None else task.description,
@@ -245,9 +243,22 @@ class TaskService:
         )
         return self._row_to_task(row) if row else None
 
+    def list_open(self, limit: int = 5) -> list[Task]:
+        """Open tasks in the order the dashboard suggests working on them."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM tasks
+            WHERE status IN ('pending', 'in_progress')
+            ORDER BY
+                CASE status WHEN 'in_progress' THEN 0 ELSE 1 END,
+                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [self._row_to_task(row) for row in rows]
+
     def get_next_focus_candidate(self) -> Task | None:
-        rows = self.list_tasks(TaskFilters(sort_by="priority_desc"))
-        for task in rows:
-            if task.status in (TaskStatus.IN_PROGRESS, TaskStatus.PENDING):
-                return task
-        return None
+        candidates = self.list_open(limit=1)
+        return candidates[0] if candidates else None

@@ -134,11 +134,17 @@ class ServiceFlowTest(unittest.TestCase):
             self.pomodoro.start(minutes=15, auto_focus=False)
         for pause_minute, resume_minute, seconds_left in [(5, 10, 600), (15, 20, 300)]:
             with (
-                patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=pause_minute)),
+                patch(
+                    "omarchy_focus.services.pomodoro.utc_now",
+                    return_value=started + timedelta(minutes=pause_minute),
+                ),
                 patch("omarchy_focus.services.pomodoro.remaining_seconds", return_value=seconds_left),
             ):
                 self.pomodoro.pause()
-            with patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=resume_minute)):
+            with patch(
+                "omarchy_focus.services.pomodoro.utc_now",
+                return_value=started + timedelta(minutes=resume_minute),
+            ):
                 self.pomodoro.resume()
         with (
             patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=25)),
@@ -183,7 +189,7 @@ class ServiceFlowTest(unittest.TestCase):
         self.assertEqual(pending_break["task_title"], task.title)
         self.assertIsNone(self.pomodoro._load_raw())
         play_sound.assert_called_once()
-        focus_tui.assert_called_once()
+        focus_tui.assert_not_called()  # opt-in via open_app_on_complete
 
         break_snapshot = self.pomodoro.start_break()
         self.assertEqual(break_snapshot.phase.value, "running")
@@ -246,6 +252,7 @@ class ServiceFlowTest(unittest.TestCase):
         services.focus = self.focus
         services.stats = self.stats
         services.tasks = self.tasks
+        services.settings = self.settings
         payload = render_bar(services, json_mode=False)
         self.assertIn("", payload)
 
@@ -275,6 +282,7 @@ class ServiceFlowTest(unittest.TestCase):
         services.pomodoro = self.pomodoro
         services.stats = self.stats
         services.tasks = self.tasks
+        services.settings = self.settings
 
         timed_focus = FocusStateSnapshot(
             active=True,
@@ -326,7 +334,7 @@ class ServiceFlowTest(unittest.TestCase):
 
         self.tasks.add_task("Write report")
         report = _render_stats_markdown(self.stats.snapshot())
-        self.assertIn("# Clar Focus — Report", report)
+        self.assertIn("# Omarchy Focus — Report", report)
         self.assertIn("## Today", report)
         self.assertIn("## This week", report)
 

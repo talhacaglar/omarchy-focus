@@ -8,7 +8,8 @@ import sys
 from dataclasses import asdict
 from typing import Any
 
-from .bar import render_bar
+from . import __version__
+from .bar import build_state_payload, render_bar
 from .bootstrap import build_services
 from .exceptions import FocusModeError, OmarchyFocusError, PomodoroError, TaskNotFoundError
 from .models import TaskFilters, TaskPriority, TaskStatus
@@ -25,8 +26,9 @@ from .utils import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="clar-focus", description=f"{APP_NAME} tasklist + pomodoro + focus manager"
+        prog="omarchy-focus", description=f"{APP_NAME}: tasks, pomodoro timer and site blocking"
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("tui")
@@ -62,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("stop")
     subparsers.add_parser("toggle")
 
+    widget_parser = subparsers.add_parser("widget", help="Install the Omarchy Shell bar widget")
+    widget_parser.add_argument("action", choices=["install", "remove", "path"])
+    widget_parser.add_argument(
+        "--no-place", action="store_true", help="Copy files but leave the bar layout alone"
+    )
+
+    break_parser = subparsers.add_parser("break", help="Start or skip the break that is waiting")
+    break_parser.add_argument("action", choices=["start", "skip"], nargs="?", default="start")
+    break_parser.add_argument("--minutes", type=int)
+
     add_task_parser = subparsers.add_parser("add-task")
     add_task_parser.add_argument("title")
     add_task_parser.add_argument("--description", default="")
@@ -80,6 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Render a Markdown report (handy for daily/weekly retrospectives)",
     )
+    stats_parser.add_argument("--weeks", type=int, default=17, help="Heatmap length in weeks")
 
     tasks_parser = subparsers.add_parser("tasks")
     tasks_subparsers = tasks_parser.add_subparsers(dest="tasks_command", required=True)
@@ -180,39 +193,56 @@ def _launch_tui() -> int:
     return 0
 
 
+def _render_stats_terminal(services: Any, weeks: int) -> str:
+    """Human stats report with a focus heatmap and peak hours."""
+    import os
+
+    from .charts import goal_bar, peak_window, render_heatmap, render_hours
+
+    stats = services.stats.snapshot()
+    goal = int(services.settings.get("daily_goal_minutes") or 0) or 150
+    color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    days = services.stats.daily_minutes(days=max(1, weeks) * 7)
+    hours = services.stats.hourly_minutes(days=30)
+    finished = stats.completed_sessions_week
+    total = finished + stats.interrupted_sessions_week
+    rate = f"{round(100 * finished / total)}%" if total else "—"
+    bold = (lambda text: f"\x1b[1m{text}\x1b[0m") if color else (lambda text: text)
+    lines = [
+        bold(f"{APP_NAME} · {len(days) // 7} weeks"),
+        "",
+        f"Today   {goal_bar(stats.today_focus_minutes, goal)}  "
+        f"{minutes_to_label(stats.today_focus_minutes)} / {minutes_to_label(goal)}"
+        f"  ·  {stats.today_completed_pomodoros} pomodoros  ·  {stats.completed_tasks_today} tasks",
+        f"Week    {minutes_to_label(stats.week_focus_minutes)}  ·  {stats.streak_days}d streak"
+        f"  ·  {rate} sessions finished",
+        "",
+        render_heatmap(days, goal, style="ansi" if color else "plain"),
+        "",
+        bold("Focus by hour (30 days)"),
+        render_hours(hours),
+    ]
+    peak = peak_window(hours)
+    if peak:
+        start, _ = peak
+        lines.append(f"Peak: {start:02d}:00–{(start + 2) % 24:02d}:00")
+    return "\n".join(lines)
+
+
 def _render_status(services: Any, *, as_json: bool = False) -> str:
+    if as_json:
+        return json.dumps(build_state_payload(services), ensure_ascii=False, indent=2)
     services.sync()
     pomodoro = services.pomodoro.snapshot()
     pending_break = services.pomodoro.pending_break()
     focus = services.focus.snapshot()
     pending = services.tasks.count_pending()
-    stats = services.stats.snapshot()
-    payload = {
-        "pending_tasks": pending,
-        "pomodoro": {
-            "phase": pomodoro.phase.value,
-            "type": pomodoro.session_type.value if pomodoro.session_type else None,
-            "remaining_seconds": pomodoro.remaining_seconds,
-            "task_title": pomodoro.task_title,
-        },
-        "pending_break": pending_break,
-        "focus": {
-            "active": focus.active,
-            "strict": focus.strict_mode,
-            "sites": list(focus.blocked_sites),
-            "ends_at": focus.ends_at.isoformat() if focus.ends_at else None,
-        },
-        "stats": {
-            "today_pomodoros": stats.today_completed_pomodoros,
-            "today_focus_minutes": stats.today_focus_minutes,
-        },
-    }
-    if as_json:
-        return json.dumps(payload, ensure_ascii=False, indent=2)
     if pomodoro.phase.value == "running" and pomodoro.session_type:
         session_label = "Pomodoro" if pomodoro.session_type.value == "work" else "Break"
         task_suffix = f" | {pomodoro.task_title}" if pomodoro.task_title else ""
         return f"{session_label}: {seconds_to_clock(pomodoro.remaining_seconds)} left{task_suffix}"
+    if pomodoro.phase.value == "paused":
+        return f"Paused: {seconds_to_clock(pomodoro.remaining_seconds)} left"
     if pending_break:
         minutes = int(pending_break.get("minutes", 10))
         return f"Pomodoro complete | Break ready: {minutes}m"
@@ -227,7 +257,7 @@ def _render_stats_markdown(stats: Any) -> str:
     from datetime import date
 
     lines = [
-        f"# Clar Focus — Report ({date.today().isoformat()})",
+        f"# {APP_NAME} — Report ({date.today().isoformat()})",
         "",
         "## Today",
         f"- Completed pomodoros: **{stats.today_completed_pomodoros}**",
@@ -270,6 +300,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         return _launch_tui()
 
+    if args.command == "widget":
+        # No database needed; keep this usable before first run.
+        from .widget import WIDGET_SOURCE, install_widget, remove_widget
+
+        if args.action == "path":
+            print(WIDGET_SOURCE)
+            return 0
+        try:
+            messages = (
+                install_widget(place=not args.no_place) if args.action == "install" else remove_widget()
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print("\n".join(messages))
+        return 0
+
     services = build_services()
 
     try:
@@ -290,7 +337,9 @@ def main(argv: list[str] | None = None) -> int:
                 auto_focus=args.focus,
                 strict_focus=args.strict,
             )
-            print(f"Started {snapshot.session_type.value} for {seconds_to_clock(snapshot.remaining_seconds)}")
+            print(
+                f"Started {snapshot.session_type.value if snapshot.session_type else 'session'} for {seconds_to_clock(snapshot.remaining_seconds)}"
+            )
             return 0
         if args.command == "pause":
             snapshot = services.pomodoro.pause()
@@ -298,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "resume":
             snapshot = services.pomodoro.resume()
-            print(f"Resumed {snapshot.session_type.value}")
+            print(f"Resumed {snapshot.session_type.value if snapshot.session_type else 'session'}")
             return 0
         if args.command == "stop":
             services.pomodoro.stop()
@@ -307,6 +356,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "toggle":
             snapshot = services.pomodoro.toggle()
             print(snapshot.phase.value)
+            return 0
+        if args.command == "break":
+            services.sync()
+            if args.action == "skip":
+                services.pomodoro.skip_break()
+                print("Break skipped")
+                return 0
+            snapshot = services.pomodoro.start_break(minutes=args.minutes)
+            print(
+                f"Started {snapshot.session_type.value if snapshot.session_type else 'session'} for {seconds_to_clock(snapshot.remaining_seconds)}"
+            )
             return 0
         if args.command == "add-task":
             task = services.tasks.add_task(
@@ -326,16 +386,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.md:
                 print(_render_stats_markdown(stats))
             else:
-                print(
-                    "\n".join(
-                        [
-                            f"Today: {stats.today_completed_pomodoros} pomodoros / {stats.today_focus_minutes}m",
-                            f"Week focus: {stats.week_focus_minutes}m",
-                            f"Completed tasks today: {stats.completed_tasks_today}",
-                            f"Streak: {stats.streak_days} day(s)",
-                        ]
-                    )
-                )
+                print(_render_stats_terminal(services, args.weeks))
             return 0
         if args.command == "tasks":
             if args.tasks_command == "list":
@@ -386,32 +437,30 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         if args.command == "focus":
             if args.focus_command == "on":
-                snapshot = services.focus.start(
+                guard = services.focus.start(
                     minutes=args.minutes,
                     strict_mode=args.strict,
                     sites=args.site or None,
                 )
-                print(f"Focus mode active with {len(snapshot.blocked_sites)} site(s)")
+                print(f"Focus mode active with {len(guard.blocked_sites)} site(s)")
                 return 0
             if args.focus_command == "off":
                 services.focus.stop(force=args.force)
                 print("Focus mode disabled")
                 return 0
             if args.focus_command == "status":
-                snapshot = services.focus.status()
+                guard = services.focus.status()
                 if args.json:
-                    print(json.dumps(asdict(snapshot), ensure_ascii=False, indent=2, default=str))
+                    print(json.dumps(asdict(guard), ensure_ascii=False, indent=2, default=str))
                 else:
-                    if snapshot.active:
-                        print(
-                            f"Focus ON | strict={snapshot.strict_mode} | blocked={len(snapshot.blocked_sites)}"
-                        )
+                    if guard.active:
+                        print(f"Focus ON | strict={guard.strict_mode} | blocked={len(guard.blocked_sites)}")
                     else:
                         print("Focus OFF")
                 return 0
             if args.focus_command == "recover":
-                snapshot = services.focus.recover()
-                print("recovered" if snapshot.active else "idle")
+                guard = services.focus.recover()
+                print("recovered" if guard.active else "idle")
                 return 0
             if args.focus_command == "add-site":
                 services.focus.add_site(args.domain, enabled=not args.disabled)

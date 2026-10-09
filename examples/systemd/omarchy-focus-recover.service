@@ -1,0 +1,10 @@
+[Unit]
+Description=Recover Omarchy Focus session state on login
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/omarchy-focus focus recover
+
+[Install]
+WantedBy=default.target

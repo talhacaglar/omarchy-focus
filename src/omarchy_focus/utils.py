@@ -14,10 +14,10 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
-from .paths import APP_NAME, APP_SLUG, WAYBAR_SIGNAL
+from .paths import APP_NAME, APP_SLUG, CHANGE_STAMP_PATH, RUNTIME_DIR, WAYBAR_SIGNAL
 
-TUI_LOCK_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/{os.getuid()}")) / f"{APP_SLUG}.lock"
-TUI_WINDOW_PATH = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/{os.getuid()}")) / f"{APP_SLUG}.window.json"
+TUI_LOCK_PATH = RUNTIME_DIR / f"{APP_SLUG}.lock"
+TUI_WINDOW_PATH = RUNTIME_DIR / f"{APP_SLUG}.window.json"
 
 
 def utc_now() -> datetime:
@@ -143,7 +143,14 @@ def json_dumps(value: Any) -> str:
 
 
 def poke_status_bar() -> None:
-    """Refresh a legacy Waybar instance; Omarchy Shell polls automatically."""
+    """Tell status bars that state changed.
+
+    The Omarchy Shell widget watches the change stamp with inotify; Waybar
+    listens for its realtime signal.
+    """
+    with contextlib.suppress(OSError):
+        CHANGE_STAMP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CHANGE_STAMP_PATH.write_text(f"{utc_now().timestamp():.3f}\n", encoding="utf-8")
     subprocess.run(["pkill", f"-RTMIN+{WAYBAR_SIGNAL}", "waybar"], check=False, capture_output=True)
 
 

@@ -45,6 +45,16 @@ class StatsService:
             """,
             (week_iso,),
         )
+        week_outcomes = self.db.fetchone(
+            """
+            SELECT COALESCE(SUM(completed), 0) AS done,
+                   COALESCE(SUM(CASE WHEN completed = 0 AND interrupted = 1 THEN 1 ELSE 0 END), 0) AS cut
+            FROM pomodoro_sessions
+            WHERE session_type = 'work'
+              AND started_at >= ?
+            """,
+            (week_iso,),
+        )
         week_focus_sessions = self.db.fetchone(
             """
             SELECT COUNT(*) AS count
@@ -133,7 +143,50 @@ class StatsService:
             top_task_focus=top_task_focus,
             focus_days=focus_days,
             blocked_sites=blocked_sites,
+            completed_sessions_week=int(week_outcomes["done"]) if week_outcomes else 0,
+            interrupted_sessions_week=int(week_outcomes["cut"]) if week_outcomes else 0,
         )
+
+    def daily_minutes(self, days: int = 119) -> list[tuple[str, int]]:
+        """Focus minutes per local day, oldest first, ending today (heatmaps)."""
+        today = local_now().date()
+        first = today - timedelta(days=days - 1)
+        since = start_of_day(local_now() - timedelta(days=days - 1)).astimezone(UTC).isoformat()
+        rows = self.db.fetchall(
+            """
+            SELECT date(started_at, 'localtime') AS day, SUM(duration_seconds) AS total
+            FROM pomodoro_sessions
+            WHERE session_type = 'work' AND completed = 1 AND started_at >= ?
+            GROUP BY day
+            """,
+            (since,),
+        )
+        totals = {row["day"]: int(row["total"] // 60) for row in rows}
+        return [
+            (
+                (first + timedelta(days=offset)).isoformat(),
+                totals.get((first + timedelta(days=offset)).isoformat(), 0),
+            )
+            for offset in range(days)
+        ]
+
+    def hourly_minutes(self, days: int = 30) -> list[int]:
+        """Focus minutes by local hour of day over the last ``days`` days."""
+        since = (local_now() - timedelta(days=days)).astimezone(UTC).isoformat()
+        rows = self.db.fetchall(
+            """
+            SELECT CAST(strftime('%H', started_at, 'localtime') AS INTEGER) AS hour,
+                   SUM(duration_seconds) AS total
+            FROM pomodoro_sessions
+            WHERE session_type = 'work' AND completed = 1 AND started_at >= ?
+            GROUP BY hour
+            """,
+            (since,),
+        )
+        hours = [0] * 24
+        for row in rows:
+            hours[int(row["hour"])] = int(row["total"] // 60)
+        return hours
 
     def _compute_streak(self) -> int:
         rows = self.db.fetchall(

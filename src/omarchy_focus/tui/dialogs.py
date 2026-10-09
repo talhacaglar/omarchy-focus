@@ -350,10 +350,7 @@ class BreakPromptScreen(ModalScreen[bool]):
         task_suffix = f"\nTask: {self.task_title}" if self.task_title else ""
         with Vertical(id="break-prompt-dialog"):
             yield Static("Pomodoro Complete", classes="dialog-title")
-            yield Static(
-                f"Start a {self.minutes}-minute break?{task_suffix}\n"
-                "The timer begins immediately."
-            )
+            yield Static(f"Start a {self.minutes}-minute break?{task_suffix}\nThe timer begins immediately.")
             with Horizontal(classes="button-row"):
                 yield Button("Skip", id="skip")
                 yield Button(f"Start {self.minutes}m Break", variant="primary", id="start-break")

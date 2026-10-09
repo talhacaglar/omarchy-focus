@@ -67,9 +67,12 @@ class PomodoroStateSnapshot:
     started_at: datetime | None = None
     ends_at: datetime | None = None
     paused_at: datetime | None = None
-    paused_seconds: int = 0
     boot_id: str | None = None
     remaining_seconds: int = 0
+    # Planned length of the session; drives progress rings.
+    total_seconds: int = 0
+    # Time spent paused so far. Excluded from recorded focus time.
+    paused_seconds: int = 0
     task_id: int | None = None
     task_title: str | None = None
     cycle_count: int = 0
@@ -112,3 +115,6 @@ class StatsSnapshot:
     top_task_focus: list[tuple[str, int]] = field(default_factory=list)
     focus_days: list[tuple[str, int]] = field(default_factory=list)
     blocked_sites: list[tuple[str, int]] = field(default_factory=list)
+    # Work sessions this week that ran to completion vs. were stopped early.
+    completed_sessions_week: int = 0
+    interrupted_sessions_week: int = 0

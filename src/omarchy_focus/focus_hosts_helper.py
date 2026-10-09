@@ -1,21 +1,39 @@
-"""Safe hosts-file helper for focus mode."""
+"""Safe hosts-file helper for focus mode.
+
+This module runs as root. It must stay standard-library only so it can be
+installed as a standalone, root-owned script (see install.sh
+--system-helper), and it validates every input it writes.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import pwd
+import re
 import tempfile
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 DEFAULT_HOSTS_PATH = Path("/etc/hosts")
+SYSTEM_HELPER_PATH = Path("/usr/local/libexec/omarchy-focus-hosts-helper")
 BEGIN_MARKER = "# >>> OMARCHY_FOCUS START"
 END_MARKER = "# <<< OMARCHY_FOCUS END"
 META_PREFIX = "# OMARCHY_FOCUS_META "
 BLOCK_ADDRESSES = ("0.0.0.0", "::1")
 BLOCK_ADDRESS_ALIASES = {"127.0.0.1", "0.0.0.0", "::1", "::"}
+# RFC 1123 hostname: dot-separated labels of letters, digits and inner
+# hyphens, with a non-numeric TLD. Anything else (spaces, newlines, '#')
+# could inject arbitrary lines into a root-owned file.
+_LABEL = r"(?!-)[a-z0-9-]{1,63}(?<!-)"
+DOMAIN_PATTERN = re.compile(rf"^(?=.{{1,253}}$)(?:{_LABEL}\.)+(?!\d+$){_LABEL}$")
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def is_valid_domain(value: str) -> bool:
+    return DOMAIN_PATTERN.fullmatch(value.strip().lower()) is not None
 
 
 @dataclass(slots=True)
@@ -199,8 +217,40 @@ def _require_root(action: str, hosts_path: Path) -> None:
         raise SystemExit("Root privileges required to modify /etc/hosts")
 
 
+def _elevated() -> bool:
+    return os.geteuid() == 0 and bool(os.environ.get("SUDO_UID") or os.environ.get("PKEXEC_UID"))
+
+
+def _invoking_user() -> str:
+    if os.environ.get("SUDO_USER"):
+        return os.environ["SUDO_USER"]
+    pkexec_uid = os.environ.get("PKEXEC_UID")
+    if pkexec_uid and pkexec_uid.isdigit():
+        try:
+            return pwd.getpwuid(int(pkexec_uid)).pw_name
+        except KeyError:
+            pass
+    return os.environ.get("USER") or "unknown"
+
+
+def _validate(args: argparse.Namespace, hosts_path: Path) -> None:
+    # Through sudo/pkexec the caller is unprivileged: never let them point
+    # a root write at another file.
+    if _elevated() and hosts_path != DEFAULT_HOSTS_PATH:
+        raise SystemExit("--hosts-file is not allowed when running elevated")
+    if args.command != "apply":
+        return
+    bad = [site for site in args.sites if not is_valid_domain(site)]
+    if bad:
+        raise SystemExit(f"Invalid domain(s): {', '.join(bad)}")
+    if not _SESSION_ID_PATTERN.match(args.session_id):
+        raise SystemExit("Invalid session id")
+    if len(args.started_at) > 64 or any(ch in args.started_at for ch in "\r\n"):
+        raise SystemExit("Invalid start time")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Clar Focus hosts helper")
+    parser = argparse.ArgumentParser(description="Omarchy Focus hosts helper")
     parser.add_argument("--hosts-file", default=str(DEFAULT_HOSTS_PATH))
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -208,9 +258,7 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--session-id", required=True)
     apply_parser.add_argument("--strict", action="store_true")
     apply_parser.add_argument("--started-at", required=True)
-    apply_parser.add_argument(
-        "--owner", default=os.environ.get("SUDO_USER") or os.environ.get("USER") or "unknown"
-    )
+    apply_parser.add_argument("--owner", default=_invoking_user())
     apply_parser.add_argument("sites", nargs="+")
 
     clear_parser = subparsers.add_parser("clear")
@@ -226,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     hosts_path = Path(args.hosts_file).expanduser()
     _require_root(args.command, hosts_path)
+    _validate(args, hosts_path)
 
     if args.command == "apply":
         status = apply_blocks(

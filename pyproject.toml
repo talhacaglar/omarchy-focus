@@ -3,18 +3,30 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clar-focus"
-version = "0.1.0"
-description = "Terminal productivity suite for Arch Linux, Hyprland, and Omarchy Shell."
+name = "omarchy-focus"
+version = "0.2.0"
+description = "Pomodoro timer, task queue and site blocker for Omarchy: TUI, CLI and a native bar widget."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [
-  { name = "clar" }
+  { name = "Talha Caglar" }
 ]
+keywords = ["omarchy", "hyprland", "pomodoro", "focus", "tui", "textual", "arch-linux"]
+classifiers = [
+  "Environment :: Console :: Curses",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Scheduling",
+]
+
 dependencies = [
   "textual>=0.58.1"
 ]
+
+[project.urls]
+Homepage = "https://github.com/talhacaglar/omarchy-focus"
+Issues = "https://github.com/talhacaglar/omarchy-focus/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -24,12 +36,13 @@ dev = [
 ]
 
 [project.scripts]
+omarchy-focus = "omarchy_focus.cli:main"
+omarchy-focus-hosts-helper = "omarchy_focus.focus_hosts_helper:main"
+# Names from earlier releases, kept so existing keybindings keep working.
 clar-focus = "omarchy_focus.cli:main"
 clar-focus-hosts-helper = "omarchy_focus.focus_hosts_helper:main"
-omarchy-focus = "omarchy_focus.cli:main"
 focus = "omarchy_focus.legacy:main"
 focus-indicator = "omarchy_focus.legacy:indicator_main"
-omarchy-focus-hosts-helper = "omarchy_focus.focus_hosts_helper:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/omarchy_focus"]

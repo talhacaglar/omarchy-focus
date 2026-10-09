@@ -12,10 +12,17 @@ import uuid
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 from ..database import Database
 from ..exceptions import FocusModeError
-from ..focus_hosts_helper import DEFAULT_HOSTS_PATH, HostsStatus, inspect_hosts_file
+from ..focus_hosts_helper import (
+    DEFAULT_HOSTS_PATH,
+    SYSTEM_HELPER_PATH,
+    HostsStatus,
+    inspect_hosts_file,
+    is_valid_domain,
+)
 from ..models import FocusStateSnapshot
 from ..notifications import notify
 from ..settings import SettingsService
@@ -35,6 +42,8 @@ class FocusService:
         domain = domain.split("/", 1)[0]
         if not domain:
             raise FocusModeError("Domain cannot be empty")
+        if not is_valid_domain(domain):
+            raise FocusModeError(f"Not a valid domain: {value.strip()}")
         return domain
 
     def list_sites(self, *, enabled_only: bool = False) -> list[tuple[str, bool, str]]:
@@ -171,17 +180,45 @@ class FocusService:
 
         snapshot = self.status(check_expiry=False)
         if snapshot.active:
+            before = asdict(snapshot)
             snapshot.system_consistent = system.readable and system.active
             snapshot.blocked_sites = system.sites if system.sites else snapshot.blocked_sites
-            self._persist_snapshot(snapshot)
+            # recover() runs on every bar refresh; only write when it matters.
+            if asdict(snapshot) != before:
+                self._persist_snapshot(snapshot)
         return snapshot
 
     def _helper_script(self) -> list[str]:
-        helper = shutil.which("clar-focus-hosts-helper") or shutil.which("omarchy-focus-hosts-helper")
-        if helper:
-            return [helper]
+        # A root-owned copy installed by `install.sh --system-helper` is
+        # preferred: sudoers can then allow it without a password, safely.
+        if os.access(SYSTEM_HELPER_PATH, os.X_OK):
+            return [str(SYSTEM_HELPER_PATH)]
+        for name in ("omarchy-focus-hosts-helper", "clar-focus-hosts-helper"):
+            helper = shutil.which(name)
+            if helper:
+                return [helper]
         helper_path = Path(__file__).resolve().parents[1] / "focus_hosts_helper.py"
         return [sys.executable, str(helper_path)]
+
+    def _privilege_prefix(self, helper: list[str], *, interactive: bool) -> list[str]:
+        """Pick how to become root for the hosts helper.
+
+        Order: cached/passwordless sudo, a sudo prompt on a terminal, then a
+        polkit dialog (Omarchy Shell ships an agent) when launched from the
+        bar or a keybinding without a terminal.
+        """
+        if os.geteuid() == 0:
+            return []
+        probe = subprocess.run(["sudo", "-n", *helper, "status", "--json"], check=False, capture_output=True)
+        if probe.returncode == 0 or not interactive:
+            return ["sudo", "-n"]
+        if sys.stdin.isatty():
+            if subprocess.run(["sudo", "-v"], check=False).returncode != 0:
+                raise FocusModeError("sudo authentication failed")
+            return ["sudo", "-n"]
+        if shutil.which("pkexec"):
+            return ["pkexec"]
+        raise FocusModeError("Root access needed: run from a terminal or install polkit (pkexec)")
 
     def _run_helper(
         self,
@@ -191,17 +228,12 @@ class FocusService:
         command = self._helper_script()
         if args and args[0] in {"clear", "status"} and "--json" not in args:
             args = (*args, "--json")
-
-        if os.geteuid() != 0:
-            if interactive:
-                warmup = subprocess.run(["sudo", "-v"], check=False)
-                if warmup.returncode != 0:
-                    raise FocusModeError("sudo authentication failed")
-                command = ["sudo", "-n"] + command
-            else:
-                command = ["sudo", "-n"] + command
+        command = [*self._privilege_prefix(command, interactive=interactive), *command]
         command.extend(args)
         result = subprocess.run(command, check=False, capture_output=True, text=True)
+        if command[0] == "pkexec" and result.returncode in {126, 127}:
+            # pkexec's codes for a dismissed dialog or a failed authentication.
+            raise FocusModeError("Authentication cancelled; sites were not changed")
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout).strip()
             raise FocusModeError(stderr or "Failed to update hosts file")
@@ -215,14 +247,14 @@ class FocusService:
             sites=tuple(payload.get("sites", [])),
         )
 
-    def _load_state(self) -> dict[str, object] | None:
+    def _load_state(self) -> dict[str, Any] | None:
         row = self.db.get_state(self.STATE_KEY)
         return json.loads(row["value_json"]) if row else None
 
     def snapshot(self) -> FocusStateSnapshot:
         return self._snapshot_from_raw(self._load_state())
 
-    def _snapshot_from_raw(self, raw: dict[str, object] | None) -> FocusStateSnapshot:
+    def _snapshot_from_raw(self, raw: dict[str, Any] | None) -> FocusStateSnapshot:
         if not raw:
             return FocusStateSnapshot(active=False)
         return FocusStateSnapshot(

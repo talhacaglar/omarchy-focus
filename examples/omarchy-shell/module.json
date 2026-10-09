@@ -1,10 +1,10 @@
 {
-  "id": "clarfocus",
+  "id": "omarchy-focus-command",
   "type": "command",
-  "exec": "~/.local/bin/clar-focus-bar status",
+  "exec": "~/.local/bin/omarchy-focus-bar status",
   "interval": 2,
-  "tooltip": "Clar Focus",
-  "onClick": "~/.local/bin/clar-focus-bar open",
-  "onRightClick": "~/.local/bin/clar-focus-bar toggle-pomodoro",
-  "onMiddleClick": "~/.local/bin/clar-focus-bar toggle-focus"
+  "tooltip": "Omarchy Focus",
+  "onClick": "~/.local/bin/omarchy-focus-bar open",
+  "onRightClick": "~/.local/bin/omarchy-focus-bar toggle-pomodoro",
+  "onMiddleClick": "~/.local/bin/omarchy-focus-bar toggle-focus"
 }

@@ -1,315 +1,103 @@
-# Clar Focus
+# Omarchy Focus: technical reference
 
-Terminal-first productivity suite for **Arch Linux + Hyprland + Omarchy Shell**.
-
-It combines:
-
-- a modern **Textual TUI**
-- a real **SQLite-backed task manager**
-- a configurable **pomodoro engine**
-- a real **hosts-file based focus blocker**
-- a native **Omarchy bar command widget**
-
-The project is designed to feel like a polished productivity tool, not a shell-script toy.
-
-## Architecture Plan
-
-1. **Core persistence layer**
-   SQLite stores tasks, settings, pomodoro history, focus sessions, blocked sites, and runtime state.
-2. **Service layer**
-   Dedicated Python services handle tasks, pomodoro logic, stats, notifications, and focus-mode orchestration.
-3. **Focus enforcement**
-   A separate helper safely edits `/etc/hosts` with explicit markers for recovery and cleanup.
-4. **CLI + Omarchy bar**
-   CLI commands drive automation, while Omarchy Shell consumes a compact JSON status command.
-5. **Premium TUI**
-   Textual renders a multi-view dashboard with keyboard-first navigation and modal editors.
-
-## Project Structure
+## Layout
 
 ```text
-clar-focus/
-├── examples/
-│   ├── systemd/
-│   │   └── clar-focus-recover.service
-│   ├── omarchy-shell/
-│   │   ├── module.json
-│   │   └── clar-focus-bar.sh
-│   └── waybar/                  # legacy compatibility examples
-├── src/
-│   └── omarchy_focus/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── bootstrap.py
-│       ├── cli.py
-│       ├── database.py
-│       ├── exceptions.py
-│       ├── focus_hosts_helper.py
-│       ├── legacy.py
-│       ├── models.py
-│       ├── notifications.py
-│       ├── paths.py
-│       ├── settings.py
-│       ├── utils.py
-│       ├── bar.py
-│       ├── waybar.py            # legacy Python aliases
-│       ├── services/
-│       │   ├── __init__.py
-│       │   ├── focus.py
-│       │   ├── pomodoro.py
-│       │   ├── stats.py
-│       │   └── tasks.py
-│       └── tui/
-│           ├── __init__.py
-│           ├── app.py
-│           ├── app.tcss
-│           └── dialogs.py
-├── tests/
-│   ├── test_focus_hosts_helper.py
-│   └── test_services.py
-├── install.sh
-└── pyproject.toml
+src/omarchy_focus/
+├── cli.py                 # argparse entry point (omarchy-focus, clar-focus)
+├── bar.py                 # status --json payload for the widget, bar/waybar text
+├── charts.py              # heatmap, hour histogram and bars for CLI + TUI
+├── widget.py              # omarchy-focus widget install|remove
+├── shell_widget/          # the Omarchy Shell plugin (QML), shipped in the wheel
+│   ├── manifest.json
+│   ├── BarWidget.qml      # pill, data loading, inotify watch, IPC
+│   ├── FocusPanel.qml     # popup: ring, controls, tasks, goal, 7 days, heatmap
+│   └── Model.js           # pure helpers, unit-tested with node
+├── database.py            # SQLite + versioned migrations
+├── focus_hosts_helper.py  # the only code that runs as root
+├── paths.py               # XDG paths, migration from Clar Focus
+├── services/              # tasks, pomodoro, focus guard, stats
+└── tui/                   # Textual app
 ```
 
-## Features
+## How the bar widget stays cheap
 
-### Task Management
+1. Every state change (CLI, TUI, timer) calls `poke_status_bar()`, which writes `$XDG_RUNTIME_DIR/omarchy-focus.changed`.
+2. The widget watches that file (`FileView` + inotify) and runs `omarchy-focus status --json` once, debounced.
+3. The JSON carries `ends_at_ms`, so the countdown and progress ring tick locally in QML.
+4. When a countdown reaches zero, the widget refreshes once so the CLI can record the session and queue the break. A 30 s heartbeat (configurable) covers day rollover.
 
-- add, edit, delete, complete, archive tasks
-- priorities: `low`, `medium`, `high`
-- tags, notes, estimated duration, due date
-- task states: `pending`, `in_progress`, `done`, `archived`
-- today view, completed view, filtering, sorting, searching
-- pomodoro sessions can be linked to a task
+Refreshing is read-only: the countdown is derived from `ends_at` instead of being saved on every tick, and the database skips its DDL when `PRAGMA user_version` is current.
 
-### Pomodoro Engine
+| | 0.1 (command widget) | 0.2 (native widget) |
+| --- | --- | --- |
+| Process spawns while idle | 30 / min (`bash -l` → bash → Python) | 2 / min |
+| Cost per spawn | ~140 ms | ~80 ms |
+| SQLite writes per refresh | several | none |
+| Latency after start/stop | up to 2 s | instant |
 
-- default cycle tuned for deep work: `50 / 10 / 25`
-- configurable work, short break, long break durations
-- long break after N work sessions
-- start / stop / pause / resume
-- work and break history in SQLite
-- daily and weekly stats
+### Widget settings
 
-### Focus Mode
-
-- real hosts-file blocking via `/etc/hosts`
-- safe markers:
-  - `# >>> OMARCHY_FOCUS START`
-  - `# <<< OMARCHY_FOCUS END`
-- strict mode support
-- timed sessions with auto-release support
-- recovery on next launch if the app crashed but markers remain
-- blocked site list stored in SQLite and editable from CLI/TUI
-
-### Omarchy Bar Integration
-
-- native Omarchy Shell `command` widget
-- left click opens TUI
-- right click toggles pomodoro
-- middle click toggles focus mode
-- automatic two-second status refresh
-
-## Install
-
-### Quick install
-
-```bash
-cd /path/to/clar-focus
-./install.sh
-```
-
-The installer:
-
-- creates a local venv under `~/.local/share/clar-focus/venv`
-- installs the package into that venv
-- symlinks commands into `~/.local/bin`
-- installs the Omarchy bar helper
-- updates the native Omarchy Shell bar widget if your config exists
-
-### Manual install
-
-```bash
-cd /path/to/clar-focus
-python -m venv .venv
-. .venv/bin/activate
-pip install -e .
-```
-
-## Dependencies
-
-Runtime:
-
-- Python 3.12+
-- `textual`
-- `notify-send` for desktop notifications
-- `sudo` for focus-mode `/etc/hosts` changes
-
-Desktop integration:
-
-- Omarchy Shell bar
-- Hyprland / Omarchy terminal launch helpers
-
-## CLI Usage
-
-### Launch TUI
-
-```bash
-clar-focus
-clar-focus tui
-```
-
-### Tasks
-
-```bash
-clar-focus add-task "Write quarterly report" --priority high --tags "work report" --estimate 90 --due "2026-04-19 15:00"
-clar-focus tasks list
-clar-focus tasks edit 3 --status in_progress
-clar-focus tasks done 3
-clar-focus tasks delete 3
-```
-
-### Pomodoro
-
-```bash
-clar-focus start --task-id 7
-clar-focus start --minutes 50 --focus
-clar-focus pause
-clar-focus resume
-clar-focus stop
-clar-focus toggle
-```
-
-### Focus Mode
-
-```bash
-clar-focus focus on --minutes 50
-clar-focus focus on --minutes 50 --strict
-clar-focus focus off
-clar-focus focus off --force
-clar-focus focus status --json
-clar-focus focus add-site reddit.com
-clar-focus focus remove-site instagram.com
-clar-focus focus recover
-```
-
-### Status / Omarchy Bar
-
-```bash
-clar-focus status
-clar-focus status --json
-clar-focus bar
-clar-focus bar --plain
-clar-focus stats
-clar-focus settings show
-clar-focus settings set pomodoro_work_minutes 50
-```
-
-## TUI Layout
-
-Views:
-
-- `Dashboard`
-- `Tasks`
-- `Focus Session`
-- `Statistics`
-- `Settings`
-- `Help`
-
-Layout direction:
-
-- compact live rail for timer, focus guard, and queue state
-- action-first `Now` view with the next task, one-click session controls, queue, and daily rhythm
-- tasks view with debounced live search, stable selection, empty-state guidance, and a detail sidebar
-- focus view with active session state and blocked-sites table
-- statistics view with mini sparkline/progress bars
-- settings view with human-readable labels, quick boolean toggles, and validated values
-- **light/dark theme** — signature "midnight-gold" (dark) and "daylight-gold"
-  (light) themes, toggled with `F2`. The choice is persisted in the settings
-  table (`theme_variant`) and restored on the next launch.
-- responsive compact mode for narrower terminal windows
-- split refresh loop: countdowns update every second without rebuilding tables or stealing input focus
-
-## Keyboard Shortcuts
-
-- `q`: quit
-- `a`: add task
-- `e`: edit selected task or selected setting
-- `d`: delete selected task
-- `x`: complete selected task
-- `/`: open the task view and focus live search
-- `f`: filter
-- `s`: start/stop pomodoro
-- `p`: pause/resume
-- `m`: focus mode on/off
-- `b`: blocked sites manager
-- `t`: tasks
-- `g`: dashboard
-- `i`: statistics
-- `,`: settings
-- `F2`: toggle light/dark theme
-- `?`: help
-
-## Omarchy Bar
-
-`./install.sh` updates `~/.config/omarchy/shell.json` without replacing the rest
-of your layout. It keeps the widget near `omarchy.indicators`, updates an
-existing `clarfocus` entry in place, and stores a timestamped backup when it
-changes the file.
-
-Native command widget:
+Set these on the widget's entry in `~/.config/omarchy/shell.json`:
 
 ```json
-{
-  "id": "clarfocus",
-  "type": "command",
-  "exec": "~/.local/bin/clar-focus-bar status",
-  "interval": 2,
-  "onClick": "~/.local/bin/clar-focus-bar open",
-  "onRightClick": "~/.local/bin/clar-focus-bar toggle-pomodoro",
-  "onMiddleClick": "~/.local/bin/clar-focus-bar toggle-focus"
-}
+{ "id": "omarchy-focus", "showIdleCount": true, "refreshIntervalSec": 30, "guardMinutes": 50,
+  "command": "/home/you/.local/bin/omarchy-focus" }
 ```
 
-Controls:
+IPC: `omarchy-shell omarchy-focus toggle|open|close|refresh`.
 
-- left click: open or raise the Clar Focus TUI
-- right click: start/stop the pomodoro
-- middle click: enable/disable Focus Guard
+### `status --json`
 
-Reference files:
+Schema `1`. Keys: `pomodoro` (`phase`, `type`, `remaining_seconds`, `total_seconds`, `ends_at_ms`, `task_id`, `task_title`, `cycle`), `pending_break`, `focus` (`active`, `strict`, `sites`, `ends_at_ms`, `consistent`), `stats` (`today_*`, `goal_minutes`, `week_focus_minutes`, `streak_days`, `completion_rate`, `week[]`), `heatmap[]` (84 days), `next_tasks[]`, `settings`. Keys from 0.1 are kept.
 
-- `examples/omarchy-shell/module.json`
-- `examples/omarchy-shell/clar-focus-bar.sh`
+## CLI
 
-The old `clar-focus waybar` command and helper names remain aliases for existing
-setups, but the installer no longer edits Waybar configuration or CSS.
+```bash
+omarchy-focus                         # TUI (same as: omarchy-focus tui)
+omarchy-focus status [--json]
+omarchy-focus stats [--json | --md] [--weeks 17]
 
-## Focus Mode Technical Notes
+omarchy-focus add-task "Title" --priority high --tags "work docs" --estimate 50 --due "2026-10-20 15:00"
+omarchy-focus tasks list [--today] [--completed] [--search text]
+omarchy-focus tasks edit 3 --status in_progress
+omarchy-focus tasks done 3 | delete 3
 
-### Chosen approach
+omarchy-focus start [--task-id 3] [--minutes 25] [--focus | --no-focus] [--strict]
+omarchy-focus pause | resume | stop | toggle
+omarchy-focus break [start | skip] [--minutes 15]
 
-Primary enforcement uses **`/etc/hosts` temporary blocks**.
+omarchy-focus focus on --minutes 50 [--strict] [--site x.com]
+omarchy-focus focus off [--force] | status [--json] | recover
+omarchy-focus focus add-site youtube.com | remove-site x.com | enable-site | disable-site
 
-Why:
+omarchy-focus settings show [--json]
+omarchy-focus settings set daily_goal_minutes 180
+omarchy-focus widget install | remove | path
+```
 
-- predictable on Arch Linux
-- easy to audit
-- reversible
-- does not require a long-running daemon
-- integrates cleanly with CLI + Omarchy bar workflows
+### Settings
 
-### Safety model
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `pomodoro_work_minutes` | 50 | Work session length |
+| `pomodoro_short_break_minutes` | 10 | Short break |
+| `pomodoro_long_break_minutes` | 25 | Long break |
+| `pomodoro_long_break_every` | 4 | Long break after this many sessions in a row (a 2 h gap starts a new cycle) |
+| `daily_goal_minutes` | 150 | Goal for the progress bar, ring and heatmap levels |
+| `focus_on_pomodoro_start` | false | Start the site guard with every session |
+| `strict_mode_default` | false | Guard can't be turned off before it ends |
+| `focus_auto_release` | true | Unblock sites when a timed guard ends |
+| `open_app_on_complete` | false | Raise the TUI when a session ends |
+| `notifications_enabled` | true | Desktop notifications |
 
-The helper:
+## TUI keys
 
-- never rewrites arbitrary lines blindly
-- removes only its own managed block
-- writes atomically via a temp file + rename
-- stores metadata inside the managed block
-- supports recovery when markers remain after a crash
+`s` start/stop · `p` pause/resume · `m` site guard · `a` add · `e` edit · `x` done · `d` delete · `/` search · `f` filter · `b` blocked sites · `g` Now · `t` Tasks · `i` Statistics · `,` Settings · `F2` light/dark · `?` help · `q` quit
 
-Managed block format:
+## Site guard
+
+Blocked domains go into a marked block in `/etc/hosts`, pointed at `0.0.0.0` and `::1`:
 
 ```text
 # >>> OMARCHY_FOCUS START
@@ -319,82 +107,41 @@ Managed block format:
 # <<< OMARCHY_FOCUS END
 ```
 
-Blocked domains are pointed at `0.0.0.0` (and `::1` for IPv6) rather than
-`127.0.0.1`. Routing to `0.0.0.0` fails fast instead of hitting any local web
-server the user might be running, and it is more resistant to DNS-rebinding
-style bypasses. The original file's permissions and ownership are preserved on
-every write so services like `systemd-resolved` keep working.
+- Only the marked block is ever rewritten, atomically, preserving the file's mode and owner. A truncated block (start marker without end) is left alone.
+- If the app dies, the next run reconciles SQLite with the markers in either direction (`focus recover`).
+- Strict mode needs a timed session; `focus off` is refused until it ends (`--force` overrides).
 
-### Recovery flow
+### Privileges
 
-On startup:
+The app never edits `/etc/hosts` itself; it runs `omarchy-focus-hosts-helper` as root. In order, it tries cached or passwordless `sudo`, a `sudo` prompt when it has a terminal, then `pkexec`, which shows Omarchy Shell's polkit dialog when launched from the bar.
 
-1. the app checks SQLite runtime state
-2. the app inspects `/etc/hosts`
-3. if markers exist but SQLite state is missing, the focus session is reconstructed as recovered
-4. if SQLite says active but hosts markers are gone, the session is closed cleanly
+`./install.sh --system-helper` installs a root-owned copy at `/usr/local/libexec/omarchy-focus-hosts-helper` and a sudoers rule for it, so the guard starts and auto-releases without prompts. A root-owned copy matters: a sudoers rule pointing at a file in your home directory would let any process running as you become root.
 
-### Strict mode
+The helper is standard-library only and refuses anything it would not write itself: domains must be valid RFC 1123 hostnames, session ids are `[A-Za-z0-9_-]`, and `--hosts-file` is rejected when running under sudo or pkexec.
 
-- strict mode is only allowed for timed sessions
-- if the timer is still running, `focus off` is rejected
-- `focus off --force` exists for explicit override paths like administrative recovery
+## Data
 
-### Root handling
+| What | Where |
+| --- | --- |
+| Database | `~/.local/share/omarchy-focus/focus.db` |
+| Change stamp | `$XDG_RUNTIME_DIR/omarchy-focus.changed` |
+| Widget | `~/.config/omarchy/plugins/omarchy-focus/` |
+| Virtualenv (install.sh) | `~/.local/share/omarchy-focus/venv` |
 
-The main app does not edit `/etc/hosts` directly.
-
-It shells out to:
-
-```bash
-clar-focus-hosts-helper apply ...
-clar-focus-hosts-helper clear
-clar-focus-hosts-helper status
-```
-
-When needed, the app invokes that helper with `sudo`.
-
-## Reports
-
-Export a Markdown retrospective (great for a daily/weekly review):
-
-```bash
-clar-focus stats --md > ~/focus-report.md
-clar-focus stats --json   # machine-readable
-```
+Coming from Clar Focus: on first run the database is copied (via SQLite's backup API, so WAL contents come along) from `~/.local/share/clar-focus/`, and config from `~/.config/clar-focus/`. The originals stay in place.
 
 ## Development
 
-Install the dev tool-chain and run the quality gates locally:
-
 ```bash
-pip install -e ".[dev]"
-ruff check .          # lint
-ruff format --check . # formatting
-mypy                  # type check (informational)
-pytest                # tests
+python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/pytest                      # includes the QML model tests when node is installed
+
+# Demo data and screenshots, isolated from your real database:
+export XDG_DATA_HOME=/tmp/of-demo
+python scripts/demo_data.py
+python scripts/tui_screenshots.py screenshots/
+omarchy-focus widget install          # then set "command" on the widget to a wrapper that exports XDG_DATA_HOME
 ```
 
-CI runs these on every push and pull request (see `.github/workflows/ci.yml`).
-
-## Testing
-
-Run the included unit tests:
-
-```bash
-pytest
-# or, without installing dev deps:
-PYTHONPATH=src python -m unittest discover -s tests -v
-```
-
-## Example Terminal Experience
-
-The intended feel is:
-
-- dark polished control room
-- gold accents for focus/work state
-- muted blue-steel surfaces
-- clear tables and sidebar details
-- keyboard-driven flow with low friction
-
-The result should feel closer to a premium workstation console than a simple todo script.
+Editing the QML in `~/.config/omarchy/plugins/omarchy-focus/` hot-reloads. The shell caches files it has already compiled, so after renaming a QML file or changing `Model.js`, run `omarchy restart shell`.
