@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-10-10
+
+### Fixed
+- The bar widget looked for the CLI only in `~/.local/bin`, so it failed on AUR (`/usr/bin`) installs. It now resolves `omarchy-focus` through a login shell's PATH.
+
 ## 0.2.0 — 2026-10-09
 
 Renamed from **Clar Focus** to **Omarchy Focus**. Data migrates automatically and the `clar-focus` command remains as an alias.

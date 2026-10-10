@@ -20,7 +20,7 @@ BarWidget {
 
   readonly property string home: Quickshell.env("HOME")
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ("/tmp/" + Quickshell.env("UID"))
-  readonly property string cli: String(setting("command", home + "/.local/bin/omarchy-focus"))
+  readonly property string cli: String(setting("command", "omarchy-focus"))
   readonly property int refreshSec: Math.max(10, parseInt(setting("refreshIntervalSec", 30), 10) || 30)
   readonly property int guardMinutes: Math.max(5, parseInt(setting("guardMinutes", 50), 10) || 50)
   readonly property bool showIdleCount: setting("showIdleCount", true) !== false
@@ -37,6 +37,12 @@ BarWidget {
   readonly property int remaining: Model.remaining(state, nowMs)
   readonly property bool hasSession: mode === "work" || mode === "break" || mode === "paused"
 
+  // A login shell resolves the CLI through PATH, so pacman (/usr/bin), pip
+  // and install.sh (~/.local/bin) installs all work.
+  function argv(args) {
+    return ["bash", "-lc", 'exec "$@"', "bash", root.cli].concat(args)
+  }
+
   function refresh() {
     if (stateProc.running) {
       refreshQueued = true
@@ -48,7 +54,7 @@ BarWidget {
   // Runs a CLI subcommand, then refreshes. Commands that need root (the site
   // guard) get a polkit dialog from the CLI because there is no terminal.
   function act(args) {
-    actionProc.command = [root.cli].concat(args)
+    actionProc.command = root.argv(args)
     actionProc.running = true
   }
 
@@ -107,7 +113,7 @@ BarWidget {
 
   Process {
     id: stateProc
-    command: [root.cli, "status", "--json"]
+    command: root.argv(["status", "--json"])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
