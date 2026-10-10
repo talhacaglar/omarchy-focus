@@ -10,6 +10,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.theme import Theme
 from textual.timer import Timer
 from textual.widgets import Button, DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
@@ -268,6 +269,14 @@ class OmarchyFocusApp(App[None]):
 
     def refresh_live_data(self) -> None:
         """Refresh countdowns without rebuilding tables or stealing input focus."""
+        try:
+            self._refresh_live_data()
+        except NoMatches:
+            # A timer can fire before the screen is composed or while it is
+            # closing; the next tick catches up.
+            return
+
+    def _refresh_live_data(self) -> None:
         self._sync_live_cache()
         self._refresh_top_chips()
         self._refresh_dashboard_now()
@@ -276,6 +285,12 @@ class OmarchyFocusApp(App[None]):
 
     def refresh_data(self) -> None:
         """Refresh slower-changing data and table contents."""
+        try:
+            self._refresh_data()
+        except NoMatches:
+            return
+
+    def _refresh_data(self) -> None:
         self._sync_live_cache()
         self._cached_stats = self.services.stats.snapshot()
         self._cached_heatmap = self.services.stats.daily_minutes(days=17 * 7)

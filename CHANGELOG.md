@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 — 2026-10-10
+
+### Fixed
+- The TUI could raise `NoMatches` when a refresh timer fired before the screen was composed or while it was closing (rare, seen as a flaky test).
+
 ## 0.2.1 — 2026-10-10
 
 ### Fixed
