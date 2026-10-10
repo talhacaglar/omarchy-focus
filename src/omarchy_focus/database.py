@@ -21,7 +21,7 @@ DEFAULT_BLOCKED_SITES = (
 # Bump this whenever a migration step is added below. The value is stored in
 # SQLite's PRAGMA user_version so existing databases can evolve without data
 # loss.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -138,6 +138,31 @@ class Database:
         # v0 -> v1: baseline. The CREATE ... IF NOT EXISTS statements above bring
         # legacy databases up to the v1 shape (tables + indexes); nothing extra
         # to do here beyond recording the version.
+        if current < 2:
+            # Keep desktop integer IDs stable. Separate identities survive deletions
+            # and triggers cover every writer (TUI, CLI, timer and sync endpoint).
+            for statement in (
+                """CREATE TABLE sync_tasks (
+                    uid TEXT PRIMARY KEY, task_id INTEGER UNIQUE,
+                    version INTEGER NOT NULL DEFAULT 1,
+                    deleted INTEGER NOT NULL DEFAULT 0)""",
+                """INSERT INTO sync_tasks(uid, task_id)
+                    SELECT lower(hex(randomblob(16))), id FROM tasks""",
+                """CREATE TABLE sync_receipts (
+                    operation_id TEXT PRIMARY KEY, payload TEXT NOT NULL)""",
+                """CREATE TABLE sync_identity (id TEXT NOT NULL)""",
+                "INSERT INTO sync_identity VALUES (lower(hex(randomblob(16))))",
+                """CREATE TRIGGER sync_task_insert AFTER INSERT ON tasks BEGIN
+                    INSERT INTO sync_tasks(uid, task_id)
+                    VALUES(lower(hex(randomblob(16))), NEW.id); END""",
+                """CREATE TRIGGER sync_task_update AFTER UPDATE ON tasks BEGIN
+                    UPDATE sync_tasks SET version = version + 1
+                    WHERE task_id = NEW.id; END""",
+                """CREATE TRIGGER sync_task_delete AFTER DELETE ON tasks BEGIN
+                    UPDATE sync_tasks SET version = version + 1, deleted = 1, task_id = NULL
+                    WHERE task_id = OLD.id; END""",
+            ):
+                conn.execute(statement)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def _restrict_permissions(self) -> None:

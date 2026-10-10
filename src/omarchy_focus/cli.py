@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("tui")
     subparsers.add_parser("raise")
 
+    mobile = subparsers.add_parser("mobile", help="Personal Android LAN sync")
+    mobile.add_argument("action", choices=["pair", "serve"])
+    mobile.add_argument("--host", default="127.0.0.1", help="LAN IPv4 address of this computer")
+    mobile.add_argument("--port", type=int, default=8766)
+
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--json", action="store_true")
 
@@ -320,6 +325,25 @@ def main(argv: list[str] | None = None) -> int:
     services = build_services()
 
     try:
+        if args.command == "mobile":
+            from .mobile_sync import make_server, prepare_pairing
+            from .paths import CONFIG_DIR
+
+            directory = CONFIG_DIR / "mobile-sync"
+            if args.action == "pair":
+                path = prepare_pairing(services.db, directory, args.host, args.port)
+                print(f"Pairing file: {path}")
+                print("Import this private file in Clar Focus on Android.")
+            else:
+                server = make_server(services.db, directory, args.host, args.port)
+                print(f"Clar Focus mobile sync: https://{args.host}:{args.port}", flush=True)
+                try:
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    pass
+                finally:
+                    server.server_close()
+            return 0
         if args.command == "tui":
             return _launch_tui()
         if args.command == "raise":
