@@ -149,7 +149,7 @@ def poke_status_bar() -> None:
     listens for its realtime signal.
     """
     with contextlib.suppress(OSError):
-        CHANGE_STAMP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CHANGE_STAMP_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         CHANGE_STAMP_PATH.write_text(f"{utc_now().timestamp():.3f}\n", encoding="utf-8")
     subprocess.run(["pkill", f"-RTMIN+{WAYBAR_SIGNAL}", "waybar"], check=False, capture_output=True)
 
@@ -159,7 +159,7 @@ poke_waybar = poke_status_bar
 
 
 def acquire_tui_lock() -> TextIO | None:
-    TUI_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TUI_LOCK_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     handle = TUI_LOCK_PATH.open("a+", encoding="utf-8")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -206,7 +206,7 @@ def register_tui_window() -> None:
     address = _discover_tui_window_address()
     if not address:
         return
-    TUI_WINDOW_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TUI_WINDOW_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     TUI_WINDOW_PATH.write_text(
         json.dumps(
             {

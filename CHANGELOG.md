@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 — 2026-10-10
+
+### Security
+- Task data was world-readable on systems with the common umask `022`: the data directory was created `0755` and `focus.db` `0644`, so other local users could read task titles and descriptions. Data, config, state and cache directories are now `0700`, the database and its WAL files `0600`, and existing installs are tightened on the next run. The runtime stamp, lock and window files also live in `0700` directories. Reported during the Omarchy plugin marketplace review.
+
 ## 0.2.2 — 2026-10-10
 
 ### Fixed

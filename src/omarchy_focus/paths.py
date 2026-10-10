@@ -34,9 +34,24 @@ CHANGE_STAMP_PATH = RUNTIME_DIR / f"{APP_SLUG}.changed"
 WAYBAR_SIGNAL = 12
 
 
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
+
+
+def private_dir(path: Path) -> None:
+    """Create ``path`` readable only by the current user, fixing older installs.
+
+    Tasks, notes and history live under these directories, so other local
+    users must not be able to list or read them whatever the umask is.
+    """
+    path.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
+    if path.stat().st_mode & 0o777 != PRIVATE_DIR_MODE:
+        path.chmod(PRIVATE_DIR_MODE)
+
+
 def _copy_database(source: Path, target: Path) -> None:
     """Copy a live SQLite database, including WAL contents, atomically."""
-    target.parent.mkdir(parents=True, exist_ok=True)
+    private_dir(target.parent)
     partial = target.with_name(target.name + ".migrating")
     partial.unlink(missing_ok=True)
     with (
@@ -44,6 +59,7 @@ def _copy_database(source: Path, target: Path) -> None:
         contextlib.closing(sqlite3.connect(partial)) as dst,
     ):
         src.backup(dst)
+    partial.chmod(PRIVATE_FILE_MODE)
     os.replace(partial, target)
 
 
@@ -69,6 +85,6 @@ def migrate_legacy_data() -> None:
 
 def ensure_app_dirs() -> None:
     """Create app directories if they do not exist."""
-    migrate_legacy_data()
     for path in (CONFIG_DIR, DATA_DIR, STATE_DIR, CACHE_DIR):
-        path.mkdir(parents=True, exist_ok=True)
+        private_dir(path)
+    migrate_legacy_data()

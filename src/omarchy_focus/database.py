@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .paths import DB_PATH
+from .paths import DB_PATH, PRIVATE_FILE_MODE
 from .utils import json_dumps, to_iso, utc_now
 
 DEFAULT_BLOCKED_SITES = (
@@ -140,10 +140,21 @@ class Database:
         # to do here beyond recording the version.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
+    def _restrict_permissions(self) -> None:
+        """Keep the database (and its WAL files) private to the owner."""
+        for suffix in ("", "-wal", "-shm"):
+            candidate = self.path.with_name(self.path.name + suffix)
+            try:
+                if candidate.stat().st_mode & 0o777 != PRIVATE_FILE_MODE:
+                    candidate.chmod(PRIVATE_FILE_MODE)
+            except FileNotFoundError:
+                continue
+
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=5.0)
+        self._restrict_permissions()
         conn.row_factory = sqlite3.Row
         # Per-connection setting: without it ON DELETE SET NULL never fires.
         conn.execute("PRAGMA foreign_keys = ON")

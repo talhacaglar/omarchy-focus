@@ -285,3 +285,53 @@ class PluginModelTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrivateDataTest(unittest.TestCase):
+    def test_database_and_directories_are_owner_only(self) -> None:
+        import os
+        import stat
+
+        old_umask = os.umask(0o022)  # the permissive default that exposed the data
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                dirs = [root / name for name in ("config", "data", "state", "cache")]
+                with (
+                    patch.object(paths, "CONFIG_DIR", dirs[0]),
+                    patch.object(paths, "DATA_DIR", dirs[1]),
+                    patch.object(paths, "STATE_DIR", dirs[2]),
+                    patch.object(paths, "CACHE_DIR", dirs[3]),
+                    patch.object(paths, "DB_PATH", dirs[1] / "focus.db"),
+                    patch.object(paths, "_DATA_ROOT", root / "nowhere"),
+                ):
+                    paths.ensure_app_dirs()
+                for directory in dirs:
+                    self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+                db = Database(dirs[1] / "focus.db")
+                db.initialize()
+                db.execute("INSERT INTO app_state (key, value_json, updated_at) VALUES ('k', '1', 'x')")
+                for suffix in ("", "-wal", "-shm"):
+                    file = dirs[1] / f"focus.db{suffix}"
+                    if file.exists():
+                        self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o600, file.name)
+        finally:
+            os.umask(old_umask)
+
+    def test_existing_loose_installs_are_tightened(self) -> None:
+        import os
+        import stat
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data = Path(tmpdir) / "data"
+            data.mkdir(mode=0o755)
+            data.chmod(0o755)
+            db_path = data / "focus.db"
+            db = Database(db_path)
+            db.initialize()
+            os.chmod(db_path, 0o644)
+            paths.private_dir(data)
+            db.fetchall("SELECT 1")
+            self.assertEqual(stat.S_IMODE(data.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(db_path.stat().st_mode), 0o600)
