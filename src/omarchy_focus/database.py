@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .paths import DB_PATH, PRIVATE_FILE_MODE
+from .paths import DB_PATH, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE
 from .utils import json_dumps, to_iso, utc_now
 
 DEFAULT_BLOCKED_SITES = (
@@ -152,7 +152,7 @@ class Database:
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
         conn = sqlite3.connect(self.path, timeout=5.0)
         self._restrict_permissions()
         conn.row_factory = sqlite3.Row

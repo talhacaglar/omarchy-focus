@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 — 2026-10-13
+
+### Security
+- Upgrading from Clar Focus left the old `clar-focus` database, its WAL files and directories readable by other local users after their data was copied to the new private location. Every start now locks the legacy copy down (`0700` directories, `0600` database files), including installs migrated by 0.2.0–0.2.3. The copy is kept so a downgrade still finds its data.
+- The migrated config directory took the legacy directory's `0755` mode from `shutil.copytree`; it and its files are now private as well.
+- Notifications passed task titles to `notify-send` as process arguments, which every local user can read from `/proc`. They are now sent directly over the session D-Bus (new dependency: `jeepney`). Without D-Bus the `notify-send` fallback shows only the fixed summary line, never the body.
+- Without `XDG_RUNTIME_DIR` (cron, `su`, ssh without pam_systemd) the runtime files fell back to `/tmp/<uid>`, which another user could create first and fill with symlinks, so opening the TUI could truncate a file of the victim's choosing. The fallback is now `/run/user/<uid>` only when it is ours and private, else `~/.cache/omarchy-focus/run`.
+- The database directory is created `0700` even when the database is opened before the app directories are set up.
+
 ## 0.2.3 — 2026-10-10
 
 ### Security

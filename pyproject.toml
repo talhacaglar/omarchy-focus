@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omarchy-focus"
-version = "0.2.3"
+version = "0.2.4"
 description = "Pomodoro timer, task queue and site blocker for Omarchy: TUI, CLI and a native bar widget."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,7 +21,9 @@ classifiers = [
 ]
 
 dependencies = [
-  "textual>=0.58.1"
+  "textual>=0.58.1",
+  # Sends notifications over D-Bus, keeping task titles out of process arguments.
+  "jeepney>=0.7",
 ]
 
 [project.urls]
