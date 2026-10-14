@@ -5,7 +5,7 @@
 Pomodoro timer, task queue and a reversible site blocker for [Omarchy](https://omarchy.org): a native bar widget, a terminal app and a CLI, all sharing one local SQLite database.
 
 <p align="center">
-  <img src="screenshots/demo.gif" alt="Omarchy Focus bar widget: start a session, open the panel, pause" width="448">
+  <img src="screenshots/demo.gif" alt="Omarchy Focus bar widget: open the panel, start a session on a task, pause and resume" width="520">
 </p>
 
 ## English
