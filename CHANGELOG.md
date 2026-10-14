@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5 — 2026-10-14
+
+### Security
+- Notifications no longer carry task titles or blocked-site domains. 0.2.4 sent them over D-Bus to keep them out of `notify-send`'s arguments, but Omarchy's notification daemon saves every notification by passing it to a `bash` process as an argument, so other local users could still read them from `/proc`. "Pomodoro started" now shows the session length, and the task and site notifications show only what happened. Reported during the Omarchy plugin marketplace review.
+
 ## 0.2.4 — 2026-10-13
 
 ### Security

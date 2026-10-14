@@ -208,7 +208,7 @@ class TaskService:
 
     def complete_task(self, task_id: int, *, notifications_enabled: bool = True) -> Task:
         task = self.update_task(task_id, status=TaskStatus.DONE.value)
-        notify("Task complete", task.title, enabled=notifications_enabled)
+        notify("Task complete", enabled=notifications_enabled)
         return task
 
     def delete_task(self, task_id: int) -> None:

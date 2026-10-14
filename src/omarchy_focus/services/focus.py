@@ -67,7 +67,7 @@ class FocusService:
             (value, 1 if enabled else 0, to_iso(utc_now()), source),
         )
         self._reapply_active_sites()
-        notify("Blocked site list updated", value, enabled=self.settings.get("notifications_enabled"))
+        notify("Blocked site list updated", enabled=self.settings.get("notifications_enabled"))
         poke_status_bar()
 
     def update_site(
@@ -107,7 +107,6 @@ class FocusService:
         self._reapply_active_sites()
         notify(
             "Blocked site updated",
-            f"{current_domain} -> {next_domain}",
             enabled=self.settings.get("notifications_enabled"),
         )
         poke_status_bar()
@@ -117,7 +116,7 @@ class FocusService:
         value = self._normalize_domain(domain)
         self.db.execute("DELETE FROM blocked_sites WHERE domain = ?", (value,))
         self._reapply_active_sites()
-        notify("Blocked site removed", value, enabled=self.settings.get("notifications_enabled"))
+        notify("Blocked site removed", enabled=self.settings.get("notifications_enabled"))
         poke_status_bar()
 
     def toggle_site(self, domain: str, enabled: bool) -> None:
@@ -125,8 +124,7 @@ class FocusService:
         self.db.execute("UPDATE blocked_sites SET enabled = ? WHERE domain = ?", (1 if enabled else 0, value))
         self._reapply_active_sites()
         notify(
-            "Blocked site toggled",
-            f"{value}: {'enabled' if enabled else 'disabled'}",
+            "Blocked site enabled" if enabled else "Blocked site disabled",
             enabled=self.settings.get("notifications_enabled"),
         )
         poke_status_bar()

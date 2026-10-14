@@ -225,7 +225,7 @@ class PomodoroService:
             raise
         notify(
             "Pomodoro started",
-            task_title or f"{duration_minutes} minute focus session",
+            f"{duration_minutes} minute focus session",
             enabled=self.settings.get("notifications_enabled"),
         )
         poke_status_bar()

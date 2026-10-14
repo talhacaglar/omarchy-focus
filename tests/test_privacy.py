@@ -22,7 +22,10 @@ from unittest.mock import patch
 
 from omarchy_focus import notifications, paths
 from omarchy_focus.database import Database
+from omarchy_focus.services.focus import FocusService
+from omarchy_focus.services.pomodoro import PomodoroService
 from omarchy_focus.services.tasks import TaskService
+from omarchy_focus.settings import SettingsService
 
 SECRET = "Secret plan for Q4"
 
@@ -169,6 +172,51 @@ class NotificationPrivacyTest(unittest.TestCase):
     def test_dbus_failure_is_not_fatal(self) -> None:
         with patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus"}):
             self.assertFalse(notifications._send_dbus("t", "b", "normal"))
+
+
+class NotificationContentTest(unittest.TestCase):
+    """Even the D-Bus path ends up in process arguments: Omarchy's notification
+    daemon persists each notification by passing its JSON to ``bash`` (0.2.5)."""
+
+    def setUp(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        self.db = Database(Path(tmpdir.name) / "focus.db")
+        self.db.initialize()
+        self.settings = SettingsService(self.db)
+        self.tasks = TaskService(self.db)
+        self.focus = FocusService(self.db, self.settings)
+        self.pomodoro = PomodoroService(self.db, self.settings, self.tasks, self.focus)
+        for quiet in (
+            patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+            patch("omarchy_focus.services.pomodoro.poke_status_bar"),
+            patch("omarchy_focus.services.pomodoro.focus_app_tui"),
+            patch("omarchy_focus.services.focus.poke_status_bar"),
+        ):
+            quiet.start()
+            self.addCleanup(quiet.stop)
+        dbus = patch.object(notifications, "_send_dbus", return_value=True)
+        self.dbus = dbus.start()
+        self.addCleanup(dbus.stop)
+
+    def sent(self) -> str:
+        return "\n".join(" ".join(map(str, call.args)) for call in self.dbus.call_args_list)
+
+    def test_task_titles_never_reach_a_notification(self) -> None:
+        task = self.tasks.add_task(SECRET)
+        self.pomodoro.start(task_id=task.id, auto_focus=False)
+        self.tasks.complete_task(task.id)
+        self.assertIn("Pomodoro started", self.sent())
+        self.assertIn("Task complete", self.sent())
+        self.assertNotIn(SECRET, self.sent())
+
+    def test_blocked_domains_never_reach_a_notification(self) -> None:
+        self.focus.add_site("secret-clinic.example")
+        self.focus.toggle_site("secret-clinic.example", False)
+        self.focus.update_site("secret-clinic.example", new_domain="other-secret.example")
+        self.focus.remove_site("other-secret.example")
+        self.assertEqual(self.dbus.call_count, 4)
+        self.assertNotIn("secret", self.sent())
 
 
 class RuntimeDirTest(unittest.TestCase):

@@ -1,8 +1,10 @@
 """Desktop notifications.
 
-Bodies often carry task titles, so they are sent straight to the session
-bus. Arguments of a ``notify-send`` process are readable by every local user
-through /proc, so the fallback passes only the fixed summary line.
+Arguments of any process are readable by every local user through /proc, and
+a notification can end up in one even over D-Bus: Omarchy's notification
+daemon saves each one by handing its JSON to ``bash`` as an argument. So
+callers never put user data (task titles, blocked domains) in a notification,
+and the ``notify-send`` fallback passes only the summary line.
 """
 
 from __future__ import annotations
