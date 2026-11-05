@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from dataclasses import asdict
 from typing import Any
@@ -15,13 +17,16 @@ from .exceptions import FocusModeError, OmarchyFocusError, PomodoroError, TaskNo
 from .models import TaskFilters, TaskPriority, TaskStatus
 from .paths import APP_NAME
 from .utils import (
-    acquire_tui_lock,
-    clear_tui_window_state,
-    focus_existing_tui,
     format_datetime,
     minutes_to_label,
+    poke_status_bar,
     seconds_to_clock,
 )
+
+# Read one JSON array of arguments from stdin instead of the command line.
+# Process arguments are readable by every local user through /proc, so the bar
+# widget sends everything this way: task titles and blocked domains stay private.
+ARGS_FROM_STDIN = "--args-from-stdin"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,8 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="omarchy-focus", description=f"{APP_NAME}: tasks, pomodoro timer and site blocking"
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument(
+        ARGS_FROM_STDIN,
+        action="store_true",
+        help="Read the arguments as a JSON array from stdin, keeping them out of /proc",
+    )
     subparsers = parser.add_subparsers(dest="command")
 
+    subparsers.add_parser("panel", help="Open the panel in the Omarchy bar")
+    # Names of the removed terminal app, so old keybindings still land somewhere.
     subparsers.add_parser("tui")
     subparsers.add_parser("raise")
 
@@ -57,12 +69,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Do not enable focus mode even if focus_on_pomodoro_start is set",
     )
-    start_parser.add_argument("--strict", action="store_true")
+    start_parser.add_argument("--strict", action=argparse.BooleanOptionalAction, default=None)
 
     subparsers.add_parser("pause")
     subparsers.add_parser("resume")
     subparsers.add_parser("stop")
     subparsers.add_parser("toggle")
+
+    adjust_parser = subparsers.add_parser("adjust", help="Extend or shorten the current session")
+    adjust_parser.add_argument("minutes", type=int, help="Minutes to add; negative to take away")
+
+    assign_parser = subparsers.add_parser("assign", help="Point the current session at a task")
+    assign_target = assign_parser.add_mutually_exclusive_group(required=True)
+    assign_target.add_argument("--task-id", type=int)
+    assign_target.add_argument("--clear", action="store_true")
 
     widget_parser = subparsers.add_parser("widget", help="Install the Omarchy Shell bar widget")
     widget_parser.add_argument("action", choices=["install", "remove", "path"])
@@ -116,8 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_edit.add_argument("--description")
     tasks_edit.add_argument("--priority", choices=[item.value for item in TaskPriority])
     tasks_edit.add_argument("--tags")
-    tasks_edit.add_argument("--estimate", type=int)
-    tasks_edit.add_argument("--due")
+    tasks_edit_estimate = tasks_edit.add_mutually_exclusive_group()
+    tasks_edit_estimate.add_argument("--estimate", type=int)
+    tasks_edit_estimate.add_argument("--clear-estimate", action="store_true")
+    tasks_edit_due = tasks_edit.add_mutually_exclusive_group()
+    tasks_edit_due.add_argument("--due")
+    tasks_edit_due.add_argument("--clear-due", action="store_true")
     tasks_edit.add_argument("--status", choices=[item.value for item in TaskStatus])
 
     focus_parser = subparsers.add_parser("focus")
@@ -125,7 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     focus_on = focus_subparsers.add_parser("on")
     focus_on.add_argument("--minutes", type=int)
-    focus_on.add_argument("--strict", action="store_true")
+    focus_on.add_argument("--strict", action=argparse.BooleanOptionalAction, default=None)
     focus_on.add_argument("--site", action="append", default=[])
 
     focus_off = focus_subparsers.add_parser("off")
@@ -135,6 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     focus_status.add_argument("--json", action="store_true")
 
     focus_subparsers.add_parser("recover")
+
+    focus_adjust = focus_subparsers.add_parser("adjust", help="Extend or shorten a timed guard")
+    focus_adjust.add_argument("minutes", type=int, help="Minutes to add; negative to take away")
 
     focus_add_site = focus_subparsers.add_parser("add-site")
     focus_add_site.add_argument("domain")
@@ -167,30 +194,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _launch_tui() -> int:
-    try:
-        from .tui.app import OmarchyFocusApp
-    except ImportError as exc:
-        print(
-            "Textual is not installed. Install dependencies with `python -m pip install -e .` first.",
-            file=sys.stderr,
-        )
-        if "--debug-import" in sys.argv:
-            raise exc
-        return 1
+def _open_panel() -> int:
+    """Everything happens in the bar panel; without Omarchy Shell, say where things stand."""
+    if shutil.which("omarchy-shell"):
+        opened = subprocess.run(["omarchy-shell", "omarchy-focus", "open"], check=False, capture_output=True)
+        if opened.returncode == 0:
+            return 0
+    print(
+        "The panel lives in the Omarchy bar: add it with `omarchy-focus widget install`.\n"
+        "See `omarchy-focus --help` for the command line.",
+        file=sys.stderr,
+    )
+    return 1
 
-    lock_handle = acquire_tui_lock()
-    if lock_handle is None:
-        focus_existing_tui()
-        return 0
 
-    app = OmarchyFocusApp()
+def _args_from_stdin() -> list[str]:
     try:
-        app.run()
-    finally:
-        clear_tui_window_state()
-        lock_handle.close()
-    return 0
+        args = json.loads(sys.stdin.readline())
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"{ARGS_FROM_STDIN}: not valid JSON ({exc})") from exc
+    if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
+        raise SystemExit(f"{ARGS_FROM_STDIN}: expected a JSON array of strings")
+    return args
 
 
 def _render_stats_terminal(services: Any, weeks: int) -> str:
@@ -294,11 +319,13 @@ def _coerce_setting(value: str) -> Any:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     normalized_argv = list(sys.argv[1:] if argv is None else argv)
+    if normalized_argv == [ARGS_FROM_STDIN]:
+        normalized_argv = _args_from_stdin()
     if normalized_argv and normalized_argv[0] == "waybar":
         normalized_argv[0] = "bar"
     args = parser.parse_args(normalized_argv)
-    if not args.command:
-        return _launch_tui()
+    if not args.command or args.command in {"panel", "tui", "raise"}:
+        return _open_panel()
 
     if args.command == "widget":
         # No database needed; keep this usable before first run.
@@ -320,10 +347,6 @@ def main(argv: list[str] | None = None) -> int:
     services = build_services()
 
     try:
-        if args.command == "tui":
-            return _launch_tui()
-        if args.command == "raise":
-            return 0 if focus_existing_tui() else 1
         if args.command == "status":
             print(_render_status(services, as_json=args.json))
             return 0
@@ -357,6 +380,14 @@ def main(argv: list[str] | None = None) -> int:
             snapshot = services.pomodoro.toggle()
             print(snapshot.phase.value)
             return 0
+        if args.command == "adjust":
+            snapshot = services.pomodoro.adjust(args.minutes)
+            print(f"{seconds_to_clock(snapshot.remaining_seconds)} left")
+            return 0
+        if args.command == "assign":
+            snapshot = services.pomodoro.assign_task(None if args.clear else args.task_id)
+            print(f"Session task: {snapshot.task_title or 'none'}")
+            return 0
         if args.command == "break":
             services.sync()
             if args.action == "skip":
@@ -377,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
                 estimated_minutes=args.estimate,
                 due_at=args.due,
             )
+            poke_status_bar()
             print(f"Created task #{task.id}: {task.title}")
             return 0
         if args.command == "stats":
@@ -416,10 +448,12 @@ def main(argv: list[str] | None = None) -> int:
                     args.task_id,
                     notifications_enabled=services.settings.get("notifications_enabled"),
                 )
+                poke_status_bar()
                 print(f"Completed: {task.title}")
                 return 0
             if args.tasks_command == "delete":
                 services.tasks.delete_task(args.task_id)
+                poke_status_bar()
                 print(f"Deleted task #{args.task_id}")
                 return 0
             if args.tasks_command == "edit":
@@ -432,7 +466,10 @@ def main(argv: list[str] | None = None) -> int:
                     estimated_minutes=args.estimate,
                     due_at=args.due,
                     status=args.status,
+                    clear_estimated_minutes=args.clear_estimate,
+                    clear_due_at=args.clear_due,
                 )
+                poke_status_bar()
                 print(f"Updated task #{task.id}: {task.title}")
                 return 0
         if args.command == "focus":
@@ -457,6 +494,10 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"Focus ON | strict={guard.strict_mode} | blocked={len(guard.blocked_sites)}")
                     else:
                         print("Focus OFF")
+                return 0
+            if args.focus_command == "adjust":
+                guard = services.focus.adjust(args.minutes)
+                print(f"Guard ends at {format_datetime(guard.ends_at)}")
                 return 0
             if args.focus_command == "recover":
                 guard = services.focus.recover()
@@ -500,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.settings_command == "set":
                 services.settings.set(args.key, _coerce_setting(args.value))
+                poke_status_bar()
                 print(f"Updated setting: {args.key}")
                 return 0
     except (OmarchyFocusError, TaskNotFoundError, PomodoroError, FocusModeError, ValueError) as exc:

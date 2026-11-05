@@ -10,10 +10,7 @@ case "${1:-status}" in
     exec omarchy-focus bar
     ;;
   open)
-    if omarchy-focus raise >/dev/null 2>&1; then
-      exit 0
-    fi
-    exec omarchy-launch-or-focus-tui omarchy-focus tui
+    exec omarchy-focus panel
     ;;
   toggle-pomodoro)
     exec omarchy-focus toggle

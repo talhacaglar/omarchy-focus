@@ -188,6 +188,18 @@ class StatsService:
             hours[int(row["hour"])] = int(row["total"] // 60)
         return hours
 
+    def focus_minutes_by_task(self) -> dict[int, int]:
+        """All focus time spent on each task, stopped sessions included."""
+        rows = self.db.fetchall(
+            """
+            SELECT task_id, SUM(duration_seconds) AS total
+            FROM pomodoro_sessions
+            WHERE session_type = 'work' AND task_id IS NOT NULL
+            GROUP BY task_id
+            """
+        )
+        return {int(row["task_id"]): int(row["total"] // 60) for row in rows}
+
     def _compute_streak(self) -> int:
         rows = self.db.fetchall(
             """

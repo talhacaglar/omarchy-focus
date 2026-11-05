@@ -16,13 +16,16 @@ function clock(totalSeconds) {
   return pad(minutes) + ":" + pad(rest)
 }
 
-function minutesLabel(minutes) {
+// `units` lets a translation say "1 sa 30 dk": { h: " sa", m: " dk" }.
+function minutesLabel(minutes, units) {
+  var h = units ? units.h : "h"
+  var m = units ? units.m : "m"
   var value = Math.max(0, Math.round(minutes || 0))
-  if (value === 0) return "0m"
+  if (value === 0) return "0" + m
   var hours = Math.floor(value / 60)
   var rest = value % 60
-  if (hours === 0) return rest + "m"
-  return rest === 0 ? hours + "h" : hours + "h " + rest + "m"
+  if (hours === 0) return rest + m
+  return rest === 0 ? hours + h : hours + h + " " + rest + m
 }
 
 // Seconds left, counted locally from the server's end timestamp so the bar
@@ -56,6 +59,14 @@ function mode(state) {
   if (state.pending_break) return "break-ready"
   if (state.focus && state.focus.active) return "guard"
   return "idle"
+}
+
+// The site guard on its own: off, manual (no timer), timed, or expired, which
+// is a timed guard still waiting for root to take the block down.
+function guardState(state, nowMs) {
+  if (!state || !state.focus || !state.focus.active) return "off"
+  if (!state.focus.ends_at_ms) return "manual"
+  return state.focus.ends_at_ms > nowMs ? "timed" : "expired"
 }
 
 var ICONS = {
@@ -94,7 +105,18 @@ function phaseLabel(state) {
   return "READY"
 }
 
-// Same thresholds as the CLI/TUI heatmap: quarters of the daily goal.
+// Catalog key for the phase label, so the panel can translate it.
+function phaseKey(state) {
+  var m = mode(state)
+  if (m === "work") return "phase.focus"
+  if (m === "break") return state.pomodoro.type === "long_break" ? "phase.longBreak" : "phase.break"
+  if (m === "paused") return "phase.paused"
+  if (m === "break-ready") return "phase.breakReady"
+  if (m === "guard") return "phase.guard"
+  return "phase.ready"
+}
+
+// Same thresholds as the CLI heatmap: quarters of the daily goal.
 function heatLevel(minutes, goal) {
   if (!minutes || minutes <= 0) return 0
   var g = Math.max(goal || 0, 1)
@@ -133,4 +155,147 @@ function priorityColor(priority, high, medium, low) {
   if (priority === "high") return high
   if (priority === "medium") return medium
   return low
+}
+
+function clampInt(value, low, high) {
+  return Math.max(low, Math.min(high, Math.round(value)))
+}
+
+// ---- Tasks
+
+function isOpen(task) {
+  return task.status === "pending" || task.status === "in_progress"
+}
+
+function pad2(value) {
+  return value < 10 ? "0" + value : String(value)
+}
+
+function dayKey(ms) {
+  var d = new Date(ms)
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+}
+
+// overdue, today, tomorrow, later, or "" without a due date. Done tasks are
+// never overdue.
+function dueKind(task, nowMs) {
+  if (!task.due_at_ms) return ""
+  var due = dayKey(task.due_at_ms)
+  var today = dayKey(nowMs)
+  if (due < today) return isOpen(task) ? "overdue" : "later"
+  if (due === today) return "today"
+  if (due === dueInDays(1, nowMs)) return "tomorrow"
+  return "later"
+}
+
+function inFilter(task, filter, nowMs) {
+  if (filter === "done") return task.status === "done"
+  if (filter === "archived") return task.status === "archived"
+  if (!isOpen(task)) return false
+  if (filter !== "today") return true
+  var kind = dueKind(task, nowMs)
+  return task.status === "in_progress" || kind === "overdue" || kind === "today"
+}
+
+function filterCounts(tasks, nowMs) {
+  var counts = { open: 0, today: 0, done: 0, archived: 0 }
+  for (var i = 0; tasks && i < tasks.length; i++) {
+    if (inFilter(tasks[i], "open", nowMs)) counts.open++
+    if (inFilter(tasks[i], "today", nowMs)) counts.today++
+    if (tasks[i].status === "done") counts.done++
+    if (tasks[i].status === "archived") counts.archived++
+  }
+  return counts
+}
+
+var SORTS = ["priority", "due", "title", "newest"]
+
+function nextSort(sort) {
+  return SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length]
+}
+
+function matchesQuery(task, query) {
+  if (!query) return true
+  var needle = query.toLowerCase()
+  var haystack = [task.title, task.description || ""].concat(task.tags || []).join(" ").toLowerCase()
+  return haystack.indexOf(needle) !== -1
+}
+
+// The CLI already sends open tasks in priority order, so "priority" keeps it.
+function visibleTasks(tasks, filter, query, sort, nowMs) {
+  var trimmed = String(query || "").trim()
+  var shown = (tasks || []).filter(function(task) {
+    return inFilter(task, filter, nowMs) && matchesQuery(task, trimmed)
+  })
+  if (sort === "due") {
+    shown.sort(function(a, b) {
+      return (a.due_at_ms || Number.MAX_VALUE) - (b.due_at_ms || Number.MAX_VALUE)
+    })
+  } else if (sort === "title") {
+    shown.sort(function(a, b) { return a.title.localeCompare(b.title) })
+  } else if (sort === "newest") {
+    shown.sort(function(a, b) { return b.id - a.id })
+  }
+  return shown
+}
+
+// A date the due chips can hand straight to `tasks edit --due`. Counted in
+// calendar days, so a clock change on the way doesn't land on the wrong one.
+function dueInDays(days, nowMs) {
+  var d = new Date(nowMs)
+  d.setDate(d.getDate() + days)
+  return dayKey(d.getTime())
+}
+
+// Midnight of the day `nowMs` falls on. List filters depend on this rather than
+// the clock, so a running countdown doesn't rebuild them every second.
+function dayStartMs(nowMs) {
+  var d = new Date(nowMs)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+// ---- CLI arguments. Values use --key=value (or follow --) so a title that
+// starts with a dash can't be read as an option.
+
+function startArgs(taskId, minutes, guard) {
+  var args = ["start"]
+  if (taskId) args.push("--task-id", String(taskId))
+  if (minutes > 0) args.push("--minutes", String(minutes))
+  if (guard === true) args.push("--focus")
+  else if (guard === false) args.push("--no-focus")
+  return args
+}
+
+function guardArgs(minutes, strict) {
+  var args = ["focus", "on"]
+  if (minutes > 0) args.push("--minutes", String(minutes))
+  args.push(strict && minutes > 0 ? "--strict" : "--no-strict")
+  return args
+}
+
+function taskAddArgs(draft) {
+  var args = ["add-task", "--priority", draft.priority || "medium"]
+  if (draft.description) args.push("--description=" + draft.description)
+  if (draft.tags) args.push("--tags=" + draft.tags)
+  if (draft.estimate > 0) args.push("--estimate=" + draft.estimate)
+  if (draft.due) args.push("--due=" + draft.due)
+  args.push("--", draft.title)
+  return args
+}
+
+function taskEditArgs(id, draft) {
+  return [
+    "tasks", "edit", String(id),
+    "--title=" + draft.title,
+    "--description=" + (draft.description || ""),
+    "--priority=" + (draft.priority || "medium"),
+    "--tags=" + (draft.tags || ""),
+    draft.estimate > 0 ? "--estimate=" + draft.estimate : "--clear-estimate",
+    draft.due ? "--due=" + draft.due : "--clear-due"
+  ]
+}
+
+function settingArgs(key, value) {
+  return ["settings", "set", key, String(value)]
 }

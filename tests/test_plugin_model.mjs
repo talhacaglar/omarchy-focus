@@ -55,4 +55,61 @@ assert.equal(columns[0][2].level, 1)
 assert.equal(columns[0][3].level, 0)
 assert.equal(columns[0][6], null)
 
+assert.equal(M.minutesLabel(90, { h: " sa", m: " dk" }), "1 sa 30 dk")
+assert.equal(M.minutesLabel(0, { h: " sa", m: " dk" }), "0 dk")
+
+// Guard states, on their own and at the moment a timed one runs out.
+assert.equal(M.guardState(idle, now), "off")
+assert.equal(M.guardState(guard, now), "timed")
+assert.equal(M.guardState(guard, now + 60_000), "expired")
+assert.equal(M.guardState({ ...idle, focus: { active: true, ends_at_ms: null } }, now), "manual")
+
+assert.equal(M.phaseKey(running), "phase.focus")
+assert.equal(M.phaseKey(ready), "phase.breakReady")
+assert.equal(M.phaseKey(null), "phase.ready")
+
+// Tasks: filters, due dates and sorting.
+const noon = new Date(2026, 10, 5, 12).getTime()
+const day = 86_400_000
+const tasks = [
+  { id: 1, title: "Write", status: "in_progress", priority: "high", tags: ["work"] },
+  { id: 2, title: "ödev teslim", status: "pending", priority: "medium", due_at_ms: noon - day },
+  { id: 3, title: "Call", status: "pending", priority: "low", due_at_ms: noon + day, description: "dentist" },
+  { id: 4, title: "Old", status: "done", priority: "low", due_at_ms: noon - day },
+  { id: 5, title: "Shelved", status: "archived", priority: "low" },
+]
+const ids = (list) => JSON.stringify(list.map((task) => task.id))
+assert.equal(M.dueKind(tasks[1], noon), "overdue")
+assert.equal(M.dueKind(tasks[2], noon), "tomorrow")
+assert.equal(M.dueKind(tasks[3], noon), "later") // done is never overdue
+assert.equal(M.dueKind(tasks[0], noon), "")
+assert.equal(JSON.stringify(M.filterCounts(tasks, noon)), JSON.stringify({ open: 3, today: 2, done: 1, archived: 1 }))
+assert.equal(ids(M.visibleTasks(tasks, "open", "", "priority", noon)), "[1,2,3]")
+assert.equal(ids(M.visibleTasks(tasks, "today", "", "priority", noon)), "[1,2]")
+assert.equal(ids(M.visibleTasks(tasks, "open", "DENTIST", "priority", noon)), "[3]")
+assert.equal(ids(M.visibleTasks(tasks, "open", " #none ", "priority", noon)), "[]")
+assert.equal(ids(M.visibleTasks(tasks, "open", "work", "priority", noon)), "[1]")
+assert.equal(ids(M.visibleTasks(tasks, "open", "", "newest", noon)), "[3,2,1]")
+assert.equal(ids(M.visibleTasks(tasks, "open", "", "due", noon)), "[2,3,1]")
+assert.equal(M.nextSort("newest"), "priority")
+assert.equal(M.dueInDays(1, new Date(2026, 11, 31, 23).getTime()), "2027-01-01")
+assert.equal(M.dayStartMs(noon), new Date(2026, 10, 5).getTime())
+// Filters stay put for the whole day, or a countdown would rebuild the list.
+assert.equal(M.dayStartMs(noon + 3_600_000), M.dayStartMs(noon))
+
+// Arguments for the CLI: values can't turn into options.
+const list = (value) => JSON.stringify(Array.from(value))
+assert.equal(list(M.startArgs(7, 25, true)), list(["start", "--task-id", "7", "--minutes", "25", "--focus"]))
+assert.equal(list(M.startArgs(0, 0, null)), list(["start"]))
+assert.equal(list(M.startArgs(0, 15, false)), list(["start", "--minutes", "15", "--no-focus"]))
+assert.equal(list(M.guardArgs(50, true)), list(["focus", "on", "--minutes", "50", "--strict"]))
+assert.equal(list(M.guardArgs(0, true)), list(["focus", "on", "--no-strict"])) // strict needs a timer
+assert.equal(list(M.taskAddArgs({ title: "-rf", priority: "high" })), list(["add-task", "--priority", "high", "--", "-rf"]))
+assert.deepEqual(
+  Array.from(M.taskEditArgs(3, { title: "-x", description: "", priority: "low", tags: "a", estimate: 0, due: "" })),
+  ["tasks", "edit", "3", "--title=-x", "--description=", "--priority=low", "--tags=a", "--clear-estimate", "--clear-due"],
+)
+assert.equal(list(M.taskEditArgs(3, { title: "t", estimate: 25, due: "2026-12-01" }).slice(-2)), list(["--estimate=25", "--due=2026-12-01"]))
+assert.equal(list(M.settingArgs("guard_minutes", 30)), list(["settings", "set", "guard_minutes", "30"]))
+
 console.log("plugin model ok")

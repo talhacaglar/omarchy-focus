@@ -7,25 +7,44 @@ It also remains compatible with Waybar's custom module format.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
 from . import __version__
 from .bootstrap import ServiceContainer
-from .models import SessionPhase, SessionType
+from .charts import peak_window
+from .focus_hosts_helper import SYSTEM_HELPER_PATH
+from .models import SessionPhase, SessionType, Task
 from .paths import APP_NAME, CHANGE_STAMP_PATH
 from .utils import local_now, poke_status_bar, progress_bar, remaining_seconds, seconds_to_clock
 
 # Bumped when the JSON consumed by the Omarchy Shell widget changes shape.
-STATE_SCHEMA = 1
+STATE_SCHEMA = 2
 
 
 def _ms(value: datetime | None) -> int | None:
     return int(value.timestamp() * 1000) if value else None
 
 
+def _task_payload(task: Task, focus_minutes: dict[int, int]) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "priority": task.priority.value,
+        "status": task.status.value,
+        "tags": list(task.tags),
+        "estimate": task.estimated_minutes,
+        # In the local form `tasks edit --due` accepts, for the panel's editor.
+        "due": task.due_at.astimezone().strftime("%Y-%m-%d %H:%M") if task.due_at else None,
+        "due_at_ms": _ms(task.due_at),
+        "focus_minutes": focus_minutes.get(task.id, 0),
+    }
+
+
 def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -> dict[str, Any]:
-    """Everything a desktop widget needs in one call (`status --json`).
+    """Everything the bar panel needs in one call (`status --json`).
 
     Timestamps are epoch milliseconds so QML can count down locally between
     refreshes. Older keys from earlier releases are kept for scripts.
@@ -42,6 +61,9 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
     goal = int(settings.get("daily_goal_minutes") or 0)
     finished = stats.completed_sessions_week
     attempted = finished + stats.interrupted_sessions_week
+    hours = services.stats.hourly_minutes(days=30)
+    peak = peak_window(hours)
+    focus_minutes = services.stats.focus_minutes_by_task()
     return {
         "schema": STATE_SCHEMA,
         "version": __version__,
@@ -56,6 +78,8 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
             "task_id": pomodoro.task_id,
             "task_title": pomodoro.task_title,
             "cycle": pomodoro.cycle_count,
+            "auto_focus": pomodoro.auto_focus,
+            "strict_focus": pomodoro.strict_focus,
         },
         "pending_break": pending_break,
         "focus": {
@@ -76,6 +100,14 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
             "streak_days": stats.streak_days,
             "completion_rate": round(finished / attempted, 3) if attempted else None,
             "week": [{"label": label, "minutes": minutes} for label, minutes in stats.focus_days],
+            "week_tasks_done": stats.completed_tasks_week,
+            "week_sessions_finished": finished,
+            "week_sessions_cut": stats.interrupted_sessions_week,
+            "week_guard_sessions": stats.focus_sessions_week,
+            "top_tasks": [{"title": title, "minutes": minutes} for title, minutes in stats.top_task_focus],
+            "blocked_sites": [{"domain": site, "sessions": count} for site, count in stats.blocked_sites],
+            "hours": hours,
+            "peak_start": peak[0] if peak else None,
         },
         "heatmap": [
             {"date": day, "minutes": minutes} for day, minutes in services.stats.daily_minutes(heatmap_days)
@@ -90,11 +122,25 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
             }
             for task in services.tasks.list_open(limit=5)
         ],
+        "tasks": [_task_payload(task, focus_minutes) for task in services.tasks.list_for_panel()],
+        "sites": [
+            {"domain": domain, "enabled": enabled, "source": source}
+            for domain, enabled, source in services.focus.list_sites()
+        ],
         "settings": {
             "work_minutes": int(settings.get("pomodoro_work_minutes")),
             "short_break_minutes": int(settings.get("pomodoro_short_break_minutes")),
             "long_break_minutes": int(settings.get("pomodoro_long_break_minutes")),
+            "long_break_every": int(settings.get("pomodoro_long_break_every")),
+            "daily_goal_minutes": goal,
+            "guard_minutes": int(settings.get("guard_minutes")),
+            "notifications_enabled": bool(settings.get("notifications_enabled")),
+            "focus_on_pomodoro_start": bool(settings.get("focus_on_pomodoro_start")),
+            "strict_mode_default": bool(settings.get("strict_mode_default")),
+            "focus_auto_release": bool(settings.get("focus_auto_release")),
         },
+        # False means every change to an active guard asks for a password.
+        "passwordless_guard": os.access(SYSTEM_HELPER_PATH, os.X_OK),
     }
 
 
@@ -151,7 +197,7 @@ def build_bar_payload(services: ServiceContainer) -> dict[str, Any]:
                     "Pomodoro Complete",
                     f"Break ready: {minutes} minute(s)",
                     f"Task: {task_title}",
-                    f"Open {APP_NAME} to confirm the break.",
+                    "Click to start the break.",
                 ]
             ),
             "class": ["active", "break"],

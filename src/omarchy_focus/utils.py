@@ -3,21 +3,16 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
-from .paths import APP_NAME, APP_SLUG, CHANGE_STAMP_PATH, RUNTIME_DIR, WAYBAR_SIGNAL
-
-TUI_LOCK_PATH = RUNTIME_DIR / f"{APP_SLUG}.lock"
-TUI_WINDOW_PATH = RUNTIME_DIR / f"{APP_SLUG}.window.json"
+from .paths import APP_NAME, CHANGE_STAMP_PATH, WAYBAR_SIGNAL
 
 
 def utc_now() -> datetime:
@@ -84,12 +79,6 @@ def format_datetime(value: datetime | None) -> str:
     return value.astimezone().strftime("%d %b %Y %H:%M")
 
 
-def format_date(value: datetime | None) -> str:
-    if value is None:
-        return "—"
-    return value.astimezone().strftime("%d %b")
-
-
 def seconds_to_clock(total_seconds: int) -> str:
     total_seconds = max(0, int(total_seconds))
     minutes, seconds = divmod(total_seconds, 60)
@@ -114,16 +103,6 @@ def progress_bar(value: int, maximum: int, width: int = 16) -> str:
     ratio = max(0.0, min(1.0, value / maximum))
     filled = round(ratio * width)
     return "█" * filled + "░" * (width - filled)
-
-
-def sparkline(values: list[int]) -> str:
-    if not values:
-        return "▁"
-    blocks = "▁▂▃▄▅▆▇█"
-    top = max(values)
-    if top <= 0:
-        return blocks[0] * len(values)
-    return "".join(blocks[min(len(blocks) - 1, round((value / top) * (len(blocks) - 1)))] for value in values)
 
 
 def coerce_tags(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
@@ -156,128 +135,6 @@ def poke_status_bar() -> None:
 
 # Compatibility for third-party code that imported the old helper.
 poke_waybar = poke_status_bar
-
-
-def acquire_tui_lock() -> TextIO | None:
-    TUI_LOCK_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    handle = TUI_LOCK_PATH.open("a+", encoding="utf-8")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        handle.close()
-        return None
-    handle.seek(0)
-    handle.truncate()
-    handle.write(f"{os.getpid()}\n")
-    handle.flush()
-    return handle
-
-
-def _discover_tui_window_address() -> str | None:
-    if not shutil.which("hyprctl"):
-        return None
-    result = subprocess.run(["hyprctl", "clients", "-j"], check=False, capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    try:
-        clients = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-
-    parent_pid = os.getppid()
-    for client in clients:
-        if int(client.get("pid", -1)) == parent_pid:
-            address = str(client.get("address") or "").strip()
-            if address:
-                return address
-
-    for client in clients:
-        classes = " ".join(
-            str(client.get(key) or "") for key in ("class", "initialClass", "title", "initialTitle")
-        ).lower()
-        if APP_SLUG in classes:
-            address = str(client.get("address") or "").strip()
-            if address:
-                return address
-    return None
-
-
-def register_tui_window() -> None:
-    address = _discover_tui_window_address()
-    if not address:
-        return
-    TUI_WINDOW_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    TUI_WINDOW_PATH.write_text(
-        json.dumps(
-            {
-                "address": address,
-                "pid": os.getpid(),
-                "parent_pid": os.getppid(),
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-
-def clear_tui_window_state() -> None:
-    with contextlib.suppress(FileNotFoundError):
-        TUI_WINDOW_PATH.unlink()
-
-
-def focus_existing_tui() -> bool:
-    if not shutil.which("hyprctl"):
-        return False
-
-    address = None
-    if TUI_WINDOW_PATH.exists():
-        try:
-            payload = json.loads(TUI_WINDOW_PATH.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-        recorded_pid = int(payload.get("pid", 0) or 0)
-        if recorded_pid and not Path(f"/proc/{recorded_pid}").exists():
-            clear_tui_window_state()
-        else:
-            address = str(payload.get("address") or "").strip() or None
-
-    if not address:
-        address = _discover_tui_window_address()
-    if not address:
-        return False
-
-    result = subprocess.run(
-        ["hyprctl", "dispatch", "focuswindow", f"address:{address}"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
-
-
-def focus_app_tui() -> None:
-    if focus_existing_tui():
-        return
-
-    launcher = shutil.which("omarchy-launch-or-focus-tui")
-    if launcher:
-        subprocess.Popen(
-            [launcher, APP_SLUG, "tui"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return
-
-    terminal = shutil.which("xdg-terminal-exec")
-    app = shutil.which(APP_SLUG)
-    if terminal and app:
-        subprocess.Popen(
-            [terminal, "-e", app, "tui"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
 
 
 def play_alert_sound() -> None:

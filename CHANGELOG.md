@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.3.0 — 2026-11-05
+
+Everything now happens in the bar panel. The terminal app is gone.
+
+### Added
+- The panel has five pages: Focus, Tasks, Sites, Stats and Settings. Everything the terminal app could do is there, in English and Turkish.
+- Extend or shorten a session while it runs or is paused: buttons in the panel, scrolling on the pill, `omarchy-focus adjust <minutes>`. A timed guard has the same (`focus adjust`), and a guard started with a session follows its end.
+- Pick a session's length and whether it blocks sites before starting, and the length of the break it earned.
+- `omarchy-focus assign` points the running session at another task. The panel uses it, because starting on a task would stop the session and record it as interrupted.
+- `tasks edit --clear-estimate` and `--clear-due`, `--no-strict`, and `omarchy-focus panel`.
+- The `language` widget setting picks the panel's language regardless of the shell's.
+
+### Changed
+- `omarchy-focus` with no arguments opens the panel. `tui` and `raise` do too, so old keybindings still land somewhere.
+- `status --json` is schema 2, with every task and site, all settings and the full stats. The widget needs CLI 0.3.
+- `settings set` rejects unknown keys and values out of range.
+- `strict_mode_default` now applies to `start` and `focus on` from the CLI; before, only the terminal app honored it.
+- Changing the blocked-site list no longer sends a notification each time: the panel shows it where you made the change.
+
+### Removed
+- The terminal app (`textual` is no longer a dependency), and the settings only it used: `default_view`, `theme_variant`, `bar_output_mode`, `open_app_on_complete`. They are dropped from existing databases on the next run.
+- The `guardMinutes` widget setting: `guard_minutes` in the panel's settings replaces it.
+
+### Fixed
+- A guard that had run out but couldn't be released without root made the widget spawn the CLI every second. It now refreshes once and offers an Unblock button.
+- Starting a session that blocks sites while a guard was already on failed; it now leaves that guard alone.
+- Quick clicks could be lost while an earlier action was still running. Actions now queue.
+
+### Security
+- The widget sends all arguments over stdin (`--args-from-stdin`), so task titles and domains typed in the panel stay out of `/proc`.
+
 ## 0.2.5 — 2026-10-14
 
 ### Security

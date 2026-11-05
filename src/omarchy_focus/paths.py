@@ -39,12 +39,11 @@ def _owned_private_dir(path: Path) -> bool:
 
 
 def resolve_runtime_dir(env: Mapping[str, str], *, fallback: Path) -> Path:
-    """Where the change stamp, TUI lock and window files live.
+    """Where the change stamp lives.
 
     Without ``XDG_RUNTIME_DIR`` (cron, su, ssh without pam_systemd) the old
     ``/tmp/<uid>`` fallback was guessable: another user could create it first
-    and plant symlinks, so the lock's truncate or the stamp write would hit
-    the victim's files. Only a directory we own and nobody else can enter is
+    and plant symlinks, so the stamp write would hit the victim's files. Only a directory we own and nobody else can enter is
     accepted; otherwise the files go in a private cache subdirectory.
     """
     if env.get("XDG_RUNTIME_DIR"):

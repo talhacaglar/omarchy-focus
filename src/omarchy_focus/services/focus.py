@@ -10,7 +10,7 @@ import subprocess
 import sys
 import uuid
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +67,6 @@ class FocusService:
             (value, 1 if enabled else 0, to_iso(utc_now()), source),
         )
         self._reapply_active_sites()
-        notify("Blocked site list updated", enabled=self.settings.get("notifications_enabled"))
         poke_status_bar()
 
     def update_site(
@@ -105,10 +104,6 @@ class FocusService:
             (next_domain, next_enabled, current_domain),
         )
         self._reapply_active_sites()
-        notify(
-            "Blocked site updated",
-            enabled=self.settings.get("notifications_enabled"),
-        )
         poke_status_bar()
         return next_domain
 
@@ -116,17 +111,12 @@ class FocusService:
         value = self._normalize_domain(domain)
         self.db.execute("DELETE FROM blocked_sites WHERE domain = ?", (value,))
         self._reapply_active_sites()
-        notify("Blocked site removed", enabled=self.settings.get("notifications_enabled"))
         poke_status_bar()
 
     def toggle_site(self, domain: str, enabled: bool) -> None:
         value = self._normalize_domain(domain)
         self.db.execute("UPDATE blocked_sites SET enabled = ? WHERE domain = ?", (1 if enabled else 0, value))
         self._reapply_active_sites()
-        notify(
-            "Blocked site enabled" if enabled else "Blocked site disabled",
-            enabled=self.settings.get("notifications_enabled"),
-        )
         poke_status_bar()
 
     def recover(self) -> FocusStateSnapshot:
@@ -445,6 +435,31 @@ class FocusService:
         notify("Focus mode off", reason, enabled=self.settings.get("notifications_enabled"))
         poke_status_bar()
         return FocusStateSnapshot(active=False)
+
+    def set_ends_at(self, ends_at: datetime) -> FocusStateSnapshot:
+        """Move the end of the active guard. No root needed: hosts doesn't change."""
+        snapshot = self.status(check_expiry=False)
+        if not snapshot.active:
+            raise FocusModeError("Focus mode is not active")
+        snapshot.ends_at = ends_at
+        self._persist_snapshot(snapshot)
+        self._update_active_session_record(snapshot)
+        poke_status_bar()
+        return snapshot
+
+    def adjust(self, minutes: int) -> FocusStateSnapshot:
+        """Extend (positive) or shorten (negative) a timed guard."""
+        snapshot = self.status(check_expiry=False)
+        if not snapshot.active:
+            raise FocusModeError("Focus mode is not active")
+        if not snapshot.ends_at:
+            raise FocusModeError("This guard has no timer")
+        if minutes < 0 and snapshot.strict_mode:
+            raise FocusModeError("Strict mode is active; the guard can't be shortened")
+        now = utc_now()
+        ends_at = max(snapshot.ends_at, now) + timedelta(minutes=minutes)
+        # Shortening stops at the last minute; turning it off is a separate choice.
+        return self.set_ends_at(max(ends_at, min(snapshot.ends_at, now + timedelta(minutes=1))))
 
     def toggle(self) -> FocusStateSnapshot:
         snapshot = self.status()

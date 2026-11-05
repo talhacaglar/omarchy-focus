@@ -66,7 +66,7 @@ def make_loose_legacy(root: Path) -> tuple[Path, sqlite3.Connection]:
     """A pre-0.2.3 ``clar-focus`` install: 0755 directories, 0644 database.
 
     The returned connection is left open so the WAL and shm files exist, as
-    they do while the bar widget or TUI is running.
+    they do while the bar widget is running.
     """
     legacy_data = root / "data" / "clar-focus"
     legacy_config = root / "config" / "clar-focus"
@@ -190,7 +190,6 @@ class NotificationContentTest(unittest.TestCase):
         for quiet in (
             patch("omarchy_focus.services.pomodoro.play_alert_sound"),
             patch("omarchy_focus.services.pomodoro.poke_status_bar"),
-            patch("omarchy_focus.services.pomodoro.focus_app_tui"),
             patch("omarchy_focus.services.focus.poke_status_bar"),
         ):
             quiet.start()
@@ -215,7 +214,8 @@ class NotificationContentTest(unittest.TestCase):
         self.focus.toggle_site("secret-clinic.example", False)
         self.focus.update_site("secret-clinic.example", new_domain="other-secret.example")
         self.focus.remove_site("other-secret.example")
-        self.assertEqual(self.dbus.call_count, 4)
+        # List edits show in the panel where they're made; nothing is sent at all.
+        self.dbus.assert_not_called()
         self.assertNotIn("secret", self.sent())
 
 

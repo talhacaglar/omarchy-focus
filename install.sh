@@ -114,10 +114,10 @@ fi
 
 echo
 say "Done. Try:"
-note "omarchy-focus            open the app"
+note "omarchy-focus            open the panel in the bar"
 note "omarchy-focus stats      heatmap and peak hours in your terminal"
 if (( bar )) && have_omarchy_shell; then
-  note "Bar: click = panel · right-click = start/pause · middle-click = site guard"
+  note "Bar: click = panel · right-click = start/pause · middle-click = site guard · scroll = change the time"
   note "Keybinding (~/.config/hypr/bindings.lua):"
   note "  o.bind(\"SUPER + ALT + F\", \"Focus panel\", \"omarchy-shell omarchy-focus toggle\")"
 fi

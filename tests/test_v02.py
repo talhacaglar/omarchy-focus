@@ -32,7 +32,6 @@ QUIET = (
     patch("omarchy_focus.services.pomodoro.notify"),
     patch("omarchy_focus.services.pomodoro.play_alert_sound"),
     patch("omarchy_focus.services.pomodoro.poke_status_bar"),
-    patch("omarchy_focus.services.pomodoro.focus_app_tui"),
 )
 
 
@@ -264,7 +263,7 @@ class StatePayloadTest(ServicesTestCase):
         ):
             self.pomodoro.start(minutes=25, auto_focus=False)
             payload = build_state_payload(container, heatmap_days=14)
-        self.assertEqual(payload["schema"], 1)
+        self.assertEqual(payload["schema"], 2)
         pomodoro = payload["pomodoro"]
         self.assertEqual(pomodoro["phase"], "running")
         self.assertEqual(pomodoro["total_seconds"], 1500)

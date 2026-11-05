@@ -2,25 +2,26 @@
 
 [English](#english) · [Türkçe](#türkçe)
 
-Pomodoro timer, task queue and a reversible site blocker for [Omarchy](https://omarchy.org): a native bar widget, a terminal app and a CLI, all sharing one local SQLite database.
+Pomodoro timer, task queue and a reversible site blocker that live in the [Omarchy](https://omarchy.org) bar. Click the pill and everything is there: no app to open. A CLI on the same local SQLite database covers scripts and keybindings.
 
 <p align="center">
-  <img src="screenshots/demo.gif" alt="Omarchy Focus bar widget: open the panel, start a session on a task, pause and resume" width="520">
+  <img src="screenshots/panel.png" alt="The Omarchy Focus panel during a session, with buttons to add or take away time" width="440">
 </p>
 
 ## English
 
 ### What you get
 
-- **Native Omarchy Shell widget.** A live countdown in the bar with a progress hairline. Click it for a panel with a progress ring, controls, your next tasks (click one to start on it), today's goal, the last 7 days and a 12-week heatmap. It follows your Omarchy theme.
+- **The whole app in one bar panel.** A live countdown in the bar with a progress hairline. Click it for five pages: Focus, Tasks, Sites, Stats and Settings. It follows your Omarchy theme and language, with English and Turkish included.
+- **Change the time as you go.** Add or take away minutes while a session runs or sits paused, or scroll on the pill. Pick the length before you start, and the length of the break it earns.
+- **Tasks.** Add one in a line, or with description, priority, estimate, tags and a due date. Filter by open, today, done and archive, search, sort, start a session on a task, or point the running session at another one without losing its time.
+- **Site guard.** Blocks distracting sites through a marked, reversible block in `/etc/hosts`, with strict mode and crash recovery. Add, rename, switch off or remove sites in the panel. It asks for your password through Omarchy's polkit dialog, or never asks with `--system-helper`.
+- **Stats that mean something.** Daily goal, streaks, finished vs. abandoned sessions, a 12-week heatmap, your peak focus hours, top tasks and most-blocked sites, in the panel and in `omarchy-focus stats`.
 - **No polling.** The widget watches a change file with inotify and counts down locally. Bar updates are instant and cost nothing while idle.
-- **Terminal app (Textual).** A Now view, tasks with search and filters, the site guard, statistics and settings, all keyboard-first.
-- **Site guard.** Blocks distracting sites through a marked, reversible block in `/etc/hosts`, with strict mode and crash recovery. From the bar it asks for your password through Omarchy's polkit dialog, or never asks with `--system-helper`.
-- **Stats that mean something.** Daily goal, streaks, finished vs. abandoned sessions, a GitHub-style heatmap and your peak focus hours, in the panel, the TUI and `omarchy-focus stats`.
 
-| Panel | Terminal app |
-| --- | --- |
-| <img src="screenshots/panel.png" alt="Widget panel" width="360"> | <img src="screenshots/statistics.png" alt="TUI statistics" width="520"> |
+| Tasks | Sites | Stats |
+| --- | --- | --- |
+| <img src="screenshots/tasks.png" alt="Tasks page" width="300"> | <img src="screenshots/sites.png" alt="Sites page" width="300"> | <img src="screenshots/statistics.png" alt="Stats page" width="300"> |
 
 ### Install
 
@@ -39,57 +40,43 @@ cd omarchy-focus
 ./install.sh                     # add --system-helper for prompt-free site blocking
 ```
 
-Needs Python 3.12+. The bar widget needs Omarchy 4 (the Quickshell-based Omarchy Shell). On other setups, `examples/waybar/` has a Waybar module.
+Needs Python 3.12+. The panel needs Omarchy 4 (the Quickshell-based Omarchy Shell). On other setups you get the CLI, and `examples/waybar/` has a Waybar module.
 
 ### Use it
 
 | Where | Action |
 | --- | --- |
-| Bar pill | click: panel · right-click: start / pause / resume · middle-click: site guard |
-| Panel keys | `Enter` start/pause · `s` stop · `g` guard · `b`/`n` take/skip break · `o` open app |
+| Bar pill | click: panel · right-click: start / pause / resume · middle-click: site guard · scroll: add or take away minutes |
+| Panel keys | `1`–`5` or `h`/`l` pages · `Enter` start/pause · `+`/`-` a minute more or less · `a` add task · `s` stop · `g` guard · `b`/`n` take/skip break |
 | Keybinding | `o.bind("SUPER + ALT + F", "Focus panel", "omarchy-shell omarchy-focus toggle")` in `~/.config/hypr/bindings.lua` |
-| Terminal | `omarchy-focus` opens the app; `?` lists its keys |
+| Language | follows Omarchy; set `"language": "tr"` on the widget's entry in `shell.json` to pick one for this panel alone |
+
+The same things from a terminal:
 
 ```bash
+omarchy-focus                            # opens the panel
 omarchy-focus add-task "Ship release notes" --priority high --estimate 50
 omarchy-focus start --task-id 1          # --focus also blocks sites for the session
+omarchy-focus adjust 5                   # five more minutes; adjust -5 for fewer
 omarchy-focus break start                # or: break skip
 omarchy-focus stats                      # heatmap + peak hours in the terminal
 omarchy-focus settings set daily_goal_minutes 180
-```
-
-```text
-Today   ━━━━━━━━━━━━━━━━━───  2h 7m / 2h 30m  ·  5 pomodoros  ·  2 tasks
-Week    14h 37m  ·  5d streak  ·  78% sessions finished
-
-    Jun   Jul     Aug       Sep     Oct
-Mon   · ▒ ▓ · ▓ ▓ ░ ▒ ▓ ▒ ▓ █ ▒ █ █ █ █
-      · · · · █ ▓ · ▓ ▒ ▓ █ █ · ▓ █ ▓ █
-Wed   · ▓ █ · ▓ ░ ▒ · █ ▓ · ▓ █ █ ▒ ▓ █
-      · ▓ ▓ · ▓ ▓ █ ▒ ▓ · █ ░ █ █ ▒ ▒ █
-Fri   · ▒ ▓ · ▓ █ ▒ █ ▓ █ ▓ █ ▒ ▓ █ ▒ ▓
-    · · ▒ · · · ▒ · ▒ ▒ ▒ · ▒ · · · ·
-Sun · ▒ · · ▒ · ▒ · ▒ ▓ · · · █ · █ ·
-
-Focus by hour (30 days)
-        ▄▇█▆ ▄▂▂▁
-0     6     12    18   23
-Peak: 09:00–11:00
 ```
 
 Screenshots use a generated demo database (`scripts/demo_data.py`), not personal data. Upgrading from **Clar Focus**? Your tasks and history move over automatically on first run and the `clar-focus` command still works. See [CHANGELOG.md](CHANGELOG.md) and the [technical reference](REFERENCE.md).
 
 ## Türkçe
 
-[Omarchy](https://omarchy.org) için Pomodoro zamanlayıcısı, görev listesi ve geri alınabilir site engelleyici: yerel bar widget'ı, terminal uygulaması ve CLI, hepsi aynı yerel SQLite veritabanını kullanır.
+[Omarchy](https://omarchy.org) çubuğunda yaşayan Pomodoro zamanlayıcısı, görev listesi ve geri alınabilir site engelleyici. Sayaca tıklayınca her şey orada: açılacak ayrı bir uygulama yok. Aynı yerel SQLite veritabanını kullanan CLI, betikler ve kısayollar içindir.
 
 ### Neler var
 
-- **Yerel Omarchy Shell widget'ı.** Barda canlı geri sayım ve ince ilerleme çizgisi. Tıklayınca ilerleme halkası, kontroller, sıradaki görevler (birine tıklayınca o görevle başlar), günlük hedef, son 7 gün ve 12 haftalık ısı haritası açılır. Omarchy temanızın renklerini kullanır.
-- **Sürekli sorgu yok.** Widget değişiklik dosyasını inotify ile izler, geri sayımı kendisi yapar. Bar anında güncellenir, boştayken kaynak harcamaz.
-- **Terminal uygulaması (Textual).** Şimdi ekranı, arama ve filtreli görevler, site koruması, istatistikler ve ayarlar; tamamen klavyeyle.
-- **Site koruması.** Dikkat dağıtan siteleri `/etc/hosts` içinde işaretli ve geri alınabilir bir blokla engeller; katı mod ve çökme kurtarma içerir. Bardan açıldığında şifreyi Omarchy'nin polkit penceresiyle sorar; `--system-helper` ile hiç sormaz.
-- **Anlamlı istatistikler.** Günlük hedef, seri, tamamlanan/yarım bırakılan oturumlar, GitHub tarzı ısı haritası ve en verimli saatleriniz; panelde, TUI'de ve `omarchy-focus stats` çıktısında.
+- **Tek panelde tüm uygulama.** Çubukta canlı geri sayım ve ince ilerleme çizgisi. Tıklayınca beş sayfa açılır: Odak, Görevler, Siteler, İstatistik ve Ayarlar. Omarchy temanızı ve dilinizi izler; İngilizce ve Türkçe hazır gelir.
+- **Süreyi yolda değiştirin.** Oturum sürerken ya da duraklatılmışken dakika ekleyip çıkarın, ya da sayaç üzerinde tekerleği çevirin. Başlamadan önce süreyi, oturum bitince de mola süresini seçin.
+- **Görevler.** Tek satırda ya da açıklama, öncelik, tahmini süre, etiket ve son tarihle ekleyin. Açık, bugün, biten ve arşiv olarak süzün, arayın, sıralayın, görevle oturum başlatın ya da süren oturumu süresini kaybetmeden başka bir göreve bağlayın.
+- **Site engeli.** Dikkat dağıtan siteleri `/etc/hosts` içinde işaretli ve geri alınabilir bir blokla engeller; katı mod ve çökme kurtarma içerir. Siteleri panelden ekleyin, düzenleyin, kapatın, kaldırın. Şifreyi Omarchy'nin polkit penceresiyle sorar; `--system-helper` ile hiç sormaz.
+- **Anlamlı istatistikler.** Günlük hedef, seri, tamamlanan/yarım bırakılan oturumlar, 12 haftalık ısı haritası, en verimli saatler, en çok çalışılan görevler ve en çok engellenen siteler; panelde ve `omarchy-focus stats` çıktısında.
+- **Sürekli sorgu yok.** Widget değişiklik dosyasını inotify ile izler, geri sayımı kendisi yapar. Çubuk anında güncellenir, boştayken kaynak harcamaz.
 
 ### Kurulum
 
@@ -106,14 +93,15 @@ cd omarchy-focus
 ./install.sh                     # şifresiz site engelleme için: --system-helper
 ```
 
-Python 3.12+ gerekir. Bar widget'ı Omarchy 4 (Quickshell tabanlı Omarchy Shell) ister; diğer kurulumlar için `examples/waybar/` içinde Waybar modülü var.
+Python 3.12+ gerekir. Panel, Omarchy 4 (Quickshell tabanlı Omarchy Shell) ister; diğer kurulumlarda CLI çalışır, `examples/waybar/` içinde de Waybar modülü var.
 
 ### Kullanım
 
-- **Bar:** tık = panel · sağ tık = başlat/duraklat/devam · orta tık = site koruması
-- **Panel tuşları:** `Enter` başlat/duraklat · `s` durdur · `g` koruma · `b`/`n` molayı al/atla · `o` uygulamayı aç
+- **Çubuk:** tık = panel · sağ tık = başlat/duraklat/devam · orta tık = site engeli · tekerlek = dakika ekle/çıkar
+- **Panel tuşları:** `1`–`5` veya `h`/`l` sayfalar · `Enter` başlat/duraklat · `+`/`-` bir dakika ekle/çıkar · `a` görev ekle · `s` durdur · `g` engel · `b`/`n` molayı al/atla
 - **Kısayol:** `~/.config/hypr/bindings.lua` içine `o.bind("SUPER + ALT + F", "Focus panel", "omarchy-shell omarchy-focus toggle")`
-- **Terminal:** `omarchy-focus` uygulamayı açar, `?` tuşları listeler; `omarchy-focus stats` ısı haritasını gösterir.
+- **Dil:** Omarchy'yi izler; yalnızca bu panelin dilini seçmek için `shell.json` içindeki widget kaydına `"language": "tr"` ekleyin.
+- **Terminal:** `omarchy-focus` paneli açar; `omarchy-focus adjust 5` beş dakika ekler; `omarchy-focus stats` ısı haritasını gösterir.
 
 Ekran görüntüleri üretilmiş örnek veritabanıyla (`scripts/demo_data.py`) hazırlandı. **Clar Focus**'tan mı geçiyorsunuz? Görevleriniz ve geçmişiniz ilk çalıştırmada otomatik taşınır, `clar-focus` komutu çalışmaya devam eder.
 

@@ -1,14 +1,15 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import qs.Ui as Ui
 import "Model.js" as Model
 
-// Popup for the Omarchy Focus pill: timer ring and controls, the task
-// queue (click a task to start on it), today's goal, the last seven days
-// and a twelve-week heatmap. All data comes from the host BarWidget.
+// The Omarchy Focus panel: five pages under one bar pill. This file owns the
+// frame (tabs, scrolling, keys, strings); each page reads everything from it
+// through `ctx`. All data comes from the host BarWidget.
 //
 // The base type is qualified on purpose: an unqualified `Panel` could
 // resolve to a sibling file of the same name in this plugin directory.
@@ -23,14 +24,109 @@ Ui.Panel {
 
   readonly property var host: hostWidget
   readonly property var model: host ? host.state : null
+  readonly property var stats: host ? host.stats : null
   readonly property double nowMs: host ? host.nowMs : Date.now()
   readonly property string mode: Model.mode(model)
+  readonly property string guardState: Model.guardState(model, nowMs)
+  readonly property bool hasSession: mode === "work" || mode === "break" || mode === "paused"
   readonly property color fg: root.bar ? root.bar.foreground : Commons.Color.foreground
-  readonly property color dim: Qt.darker(fg, 1.5)
+  readonly property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.62)
+  readonly property color track: Qt.rgba(fg.r, fg.g, fg.b, 0.12)
   readonly property color accent: Commons.Color.accent
+  readonly property color urgent: Commons.Color.urgent
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
-  readonly property var stats: model ? model.stats : null
   readonly property int goal: stats && stats.goal_minutes > 0 ? stats.goal_minutes : 150
+
+  readonly property var tabs: [
+    { name: "focus", icon: "󰔛" },
+    { name: "tasks", icon: "󰄲" },
+    { name: "sites", icon: "󰈈" },
+    { name: "stats", icon: "󰄪" },
+    { name: "settings", icon: "󰒓" }
+  ]
+  property int tab: 0
+
+  // The text field with keyboard focus, if any: keys go to it, not the panel.
+  property var activeField: null
+
+  function noteField(field, focused) {
+    if (focused) activeField = field
+    else if (activeField === field) activeField = null
+  }
+
+  function releaseField() {
+    if (panel.loadedContent) panel.loadedContent.forceActiveFocus()
+  }
+
+  // ---- Strings. A `language` on the widget entry beats the shell's language,
+  // for a panel in Turkish on a desktop in English.
+
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
+  readonly property string languageOverride: {
+    var value = host && host.settings ? String(host.settings.language || "") : ""
+    return /^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$/.test(value) ? value : ""
+  }
+
+  FileView {
+    id: overrideFile
+    path: root.languageOverride ? strings.directoryPath + "/" + root.languageOverride + ".json" : ""
+    blockLoading: true
+    printErrors: false
+  }
+
+  readonly property var overrideStrings: {
+    if (!root.languageOverride) return ({})
+    try {
+      return JSON.parse(overrideFile.text() || "{}")
+    } catch (e) {
+      return ({})
+    }
+  }
+
+  readonly property var locale: Qt.locale(languageOverride ? languageOverride.replace("-", "_") : Commons.I18n.formatLocale)
+
+  function t(key) {
+    var value = overrideStrings[key]
+    if (typeof value === "string" && value.length > 0) return value
+    return strings.t(key)
+  }
+
+  function tn(key, count) {
+    var value = overrideStrings[key]
+    if (value && typeof value === "object") return String(count === 1 && value.one ? value.one : value.other).arg(count)
+    return strings.tn(key, count).arg(count)
+  }
+
+  function dur(minutes) {
+    return Model.minutesLabel(minutes, { h: t("unit.h"), m: t("unit.m") })
+  }
+
+  function dayLabel(ms) {
+    return locale.toString(new Date(ms), "d MMM")
+  }
+
+  function dueLabel(task) {
+    var kind = Model.dueKind(task, nowMs)
+    if (kind === "today") return t("due.today")
+    if (kind === "tomorrow") return t("due.tomorrow")
+    if (kind === "overdue") return t("due.overdue").arg(dayLabel(task.due_at_ms))
+    return kind ? dayLabel(task.due_at_ms) : ""
+  }
+
+  // Tags, due date and time spent, for the second line of a task row.
+  function taskMeta(task) {
+    var parts = []
+    var due = dueLabel(task)
+    if (due) parts.push(due)
+    if (task.estimate) parts.push(dur(task.focus_minutes) + " / " + dur(task.estimate))
+    else if (task.focus_minutes) parts.push(dur(task.focus_minutes))
+    var tags = task.tags || []
+    for (var i = 0; i < tags.length; i++) parts.push("#" + tags[i])
+    return parts.join("  ·  ")
+  }
+
+  // ---- Opening and moving around
 
   function openFromHotkey() {
     root.controller.show()
@@ -41,32 +137,46 @@ Ui.Panel {
   function close() { root.controller.hide() }
   function toggle() { root.opened ? root.close() : root.openFromHotkey() }
 
+  function openTab(name) {
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].name === name) tab = i
+    }
+    openFromHotkey()
+  }
+
   function switchPanel(direction) {
     if (root.bar && typeof root.bar.switchPanelFrom === "function")
       return root.bar.switchPanelFrom(root.barIdentity, direction)
     return false
   }
 
-  function ringCenterText() {
-    if (!model) return "—"
-    if (mode === "work" || mode === "break" || mode === "paused") return Model.clock(Model.remaining(model, nowMs))
-    if (mode === "break-ready") return (model.pending_break.minutes || 0) + "m"
-    if (mode === "guard" && model.focus.ends_at_ms) return Model.clock(Model.focusRemaining(model, nowMs))
-    return Model.minutesLabel(stats ? stats.today_focus_minutes : 0)
+  function editTask(task) {
+    tab = 1
+    panel.ensureContent().tasksPage.edit(task)
   }
 
-  function ringProgress() {
-    if (mode === "work" || mode === "break" || mode === "paused") return Model.progress(model, nowMs)
-    return stats ? Math.min(1, stats.today_focus_minutes / goal) : 0
+  function focusAddTask() {
+    tab = 1
+    panel.ensureContent().tasksPage.focusAdd()
   }
 
-  function subtitle() {
-    if (!model) return host && host.error ? host.error : "Loading…"
-    if (mode === "work" || mode === "paused") return model.pomodoro.task_title || "Unassigned focus session"
-    if (mode === "break") return "Step away from the screen"
-    if (mode === "break-ready") return "Session done. Take the break?"
-    var next = model.next_tasks && model.next_tasks.length ? model.next_tasks[0].title : ""
-    return next ? "Next: " + next : "Queue clear. Add a task in the app."
+  function handleClose() {
+    var content = panel.loadedContent
+    if (content && tab === 1 && content.tasksPage.editing) content.tasksPage.closeEditor()
+    else root.close()
+  }
+
+  function handleKey(text) {
+    if (text >= "1" && text <= "5") tab = parseInt(text, 10) - 1
+    else if (text === "a") focusAddTask()
+    else if (text === "+" || text === "=") host.adjust(1)
+    else if (text === "-") host.adjust(-1)
+    else if (text === "p") host.primaryAction()
+    else if (text === "g") host.toggleGuard()
+    else if (text === "s" && hasSession) host.act(["stop"])
+    else if (text === "s") host.startPomodoro(0)
+    else if (text === "b" && mode === "break-ready") host.act(["break", "start"])
+    else if (text === "n" && mode === "break-ready") host.act(["break", "skip"])
   }
 
   KeyboardPanel {
@@ -76,485 +186,130 @@ Ui.Panel {
     bar: root.bar
     open: root.opened
     centerOnBar: true
-    focusTarget: keys
-    contentWidth: panel.fittedContentWidth(Style.space(440))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight)
+    focusTarget: panel.loadedContent
+    contentWidth: panel.fittedContentWidth(Style.space(500))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(700))
 
-    PanelKeyCatcher {
+    content: PanelKeyCatcher {
       id: keys
+      property alias tasksPage: tasksPage
       anchors.fill: parent
-      onCloseRequested: root.close()
+      blocked: !!root.activeField
+      implicitHeight: scroller.y + pageHost.implicitHeight
+
+      onCloseRequested: root.handleClose()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onReturnRequested: if (host) host.primaryAction()
-      onActivateRequested: if (host) host.primaryAction()
-      onTextKey: function(text) {
-        if (!host) return
-        if (text === "s") mode === "idle" || mode === "guard" ? host.startPomodoro(0) : host.act(["stop"])
-        else if (text === "p") host.primaryAction()
-        else if (text === "b" && mode === "break-ready") host.act(["break", "start"])
-        else if (text === "n" && mode === "break-ready") host.act(["break", "skip"])
-        else if (text === "g") host.toggleGuard()
-        else if (text === "o") { root.close(); host.openApp() }
+      onReturnRequested: if (root.tab === 0 && root.host) root.host.primaryAction()
+      onTextKey: function(text) { if (root.host) root.handleKey(text) }
+      onMoveRequested: function(dx, dy) {
+        if (dx !== 0) root.tab = (root.tab + dx + root.tabs.length) % root.tabs.length
+        if (dy !== 0) scroller.contentY = Math.max(0, Math.min(scroller.contentHeight - scroller.height, scroller.contentY + dy * Style.space(60)))
+      }
+
+      Row {
+        id: tabRow
+        width: parent.width
+        spacing: Style.space(4)
+
+        Repeater {
+          model: root.tabs
+
+          Ui.Button {
+            required property var modelData
+            required property int index
+            width: (tabRow.width - tabRow.spacing * (root.tabs.length - 1)) / root.tabs.length
+            iconText: modelData.icon
+            text: root.t("tab." + modelData.name)
+            selected: root.tab === index
+            foreground: root.fg
+            accent: root.accent
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.body
+            horizontalPadding: Style.space(4)
+            onClicked: {
+              root.tab = index
+              scroller.contentY = 0
+            }
+          }
+        }
+      }
+
+      // What just went wrong, in place of a notification while the panel is up.
+      Rectangle {
+        id: banner
+        anchors.top: tabRow.bottom
+        anchors.topMargin: visible ? Style.space(8) : 0
+        width: parent.width
+        visible: !!root.host && (root.host.actionError !== "" || root.host.error !== "")
+        height: visible ? bannerText.implicitHeight + Style.space(12) : 0
+        radius: Style.cornerRadius
+        color: Qt.rgba(root.urgent.r, root.urgent.g, root.urgent.b, 0.18)
+
+        FocusText {
+          id: bannerText
+          ctx: root
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          anchors.margins: Style.space(10)
+          text: root.host ? (root.host.actionError || root.host.error) : ""
+          wrapMode: Text.WordWrap
+          maximumLineCount: 3
+          font.pixelSize: Style.font.bodySmall
+        }
+        MouseArea {
+          anchors.fill: parent
+          onClicked: if (root.host) root.host.actionError = ""
+        }
       }
 
       Flickable {
         id: scroller
-        anchors.fill: parent
+        anchors.top: banner.bottom
+        anchors.topMargin: Style.space(14)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
         contentWidth: width
-        contentHeight: content.implicitHeight
+        contentHeight: pageHost.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
 
-        Column {
-          id: content
-          width: scroller.width
-          spacing: Style.space(16)
-
-          // ---- Hero: ring with the countdown, phase and current task.
-          Item {
-            width: parent.width
-            height: Style.space(132)
-
-            Ring {
-              id: ring
-              width: Style.space(132)
-              height: width
-              anchors.left: parent.left
-              anchors.leftMargin: Style.space(8)
-              thickness: Style.space(7)
-              progress: root.ringProgress()
-              trackColor: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
-              fillColor: root.mode === "break" || root.mode === "break-ready" ? root.fg : root.accent
-              opacity: root.mode === "paused" ? 0.55 : 1
-
-              Column {
-                anchors.centerIn: parent
-                spacing: Style.space(2)
-
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  textFormat: Text.PlainText
-                  text: root.ringCenterText()
-                  color: root.fg
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.display
-                  font.bold: true
-                  font.features: { "tnum": 1 }
-                }
-                Text {
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  textFormat: Text.PlainText
-                  text: root.mode === "idle" ? "OF " + Model.minutesLabel(root.goal).toUpperCase() : Model.phaseLabel(root.model)
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 1
-                }
-              }
-            }
-
-            Column {
-              anchors.left: ring.right
-              anchors.leftMargin: Style.space(20)
-              anchors.right: parent.right
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(10)
-
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: Model.phaseLabel(root.model)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.letterSpacing: 1
-              }
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                text: root.subtitle()
-                color: root.fg
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                wrapMode: Text.WordWrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-              }
-              Text {
-                width: parent.width
-                textFormat: Text.PlainText
-                visible: !!root.model
-                text: {
-                  if (!root.model) return ""
-                  var f = root.model.focus
-                  if (f && f.active) return "󰈈  Guard on · " + f.sites.length + " sites" + (f.strict ? " · strict" : "")
-                  return "󰈉  Guard off · press g"
-                }
-                color: root.model && root.model.focus.active ? root.accent : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
-              }
+        Item {
+          id: pageHost
+          // A sliver of room on the right: the flickable's clip would otherwise eat
+          // the border of a button that ends on the edge at a fractional position.
+          width: scroller.width - (scroller.interactive ? Style.space(10) : Style.space(2))
+          implicitHeight: {
+            switch (root.tab) {
+            case 0: return timerPage.implicitHeight
+            case 1: return tasksPage.implicitHeight
+            case 2: return sitesPage.implicitHeight
+            case 3: return statsPage.implicitHeight
+            default: return settingsPage.implicitHeight
             }
           }
 
-          // ---- Controls follow the session state.
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(8)
-
-            Button {
-              visible: root.mode === "idle" || root.mode === "guard"
-              iconText: "󰐊"
-              text: "Focus " + (root.model ? root.model.settings.work_minutes : 50) + "m"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.startPomodoro(0)
-            }
-            Button {
-              visible: root.mode === "work" || root.mode === "break"
-              iconText: "󰏤"
-              text: "Pause"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.act(["pause"])
-            }
-            Button {
-              visible: root.mode === "paused"
-              iconText: "󰐊"
-              text: "Resume"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.act(["resume"])
-            }
-            Button {
-              visible: root.mode === "work" || root.mode === "break" || root.mode === "paused"
-              iconText: "󰓛"
-              text: "Stop"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.act(["stop"])
-            }
-            Button {
-              visible: root.mode === "break-ready"
-              iconText: "󰅶"
-              text: "Break " + (root.model && root.model.pending_break ? root.model.pending_break.minutes : 0) + "m"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.act(["break", "start"])
-            }
-            Button {
-              visible: root.mode === "break-ready"
-              iconText: "󰒭"
-              text: "Skip"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.act(["break", "skip"])
-            }
-            Button {
-              iconText: root.model && root.model.focus.active ? "󰈉" : "󰈈"
-              text: root.model && root.model.focus.active ? "Unblock" : "Guard"
-              tooltipText: "Block distracting sites via /etc/hosts"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: root.host.toggleGuard()
-            }
-            Button {
-              iconText: "󰆍"
-              tooltipText: "Open the full app"
-              bordered: true
-              fontFamily: root.fontFamily
-              onClicked: { root.close(); root.host.openApp() }
-            }
-          }
-
-          Divider {}
-
-          // ---- Up next: click to start a pomodoro on that task.
-          Column {
-            width: parent.width
-            spacing: Style.space(4)
-            visible: !!root.model && root.model.next_tasks.length > 0
-
-            SectionLabel { text: "UP NEXT · " + (root.model ? root.model.pending_tasks : 0) + " OPEN" }
-
-            Repeater {
-              model: root.model ? root.model.next_tasks : []
-
-              Rectangle {
-                required property var modelData
-                width: parent.width
-                height: Style.space(30)
-                radius: Style.cornerRadius
-                color: taskArea.containsMouse ? Style.hoverFillFor(root.fg, root.accent) : "transparent"
-
-                Row {
-                  anchors.left: parent.left
-                  anchors.leftMargin: Style.space(10)
-                  anchors.right: startHint.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(10)
-
-                  Rectangle {
-                    width: Style.space(6)
-                    height: width
-                    radius: width / 2
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: Model.priorityColor(modelData.priority, root.accent, root.fg, root.dim)
-                    opacity: modelData.priority === "low" ? 0.6 : 1
-                  }
-                  Text {
-                    width: parent.width - Style.space(16)
-                    textFormat: Text.PlainText
-                    text: modelData.title
-                    color: modelData.status === "in_progress" ? root.accent : root.fg
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    elide: Text.ElideRight
-                  }
-                }
-                Text {
-                  id: startHint
-                  anchors.right: parent.right
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: taskArea.containsMouse ? "󰐊 start" : (modelData.estimate ? Model.minutesLabel(modelData.estimate) : "")
-                  color: taskArea.containsMouse ? root.accent : root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
-                MouseArea {
-                  id: taskArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.host.startPomodoro(modelData.id)
-                }
-              }
-            }
-          }
-
-          // ---- Today against the daily goal.
-          Column {
-            width: parent.width
-            spacing: Style.space(8)
-            visible: !!root.stats
-
-            Item {
-              width: parent.width
-              height: todayLabel.implicitHeight
-              SectionLabel { id: todayLabel; text: "TODAY" }
-              Text {
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(8)
-                textFormat: Text.PlainText
-                text: root.stats ? Model.minutesLabel(root.stats.today_focus_minutes) + " / " + Model.minutesLabel(root.goal) : ""
-                color: root.fg
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-            }
-            Rectangle {
-              x: Style.space(8)
-              width: parent.width - Style.space(16)
-              height: Style.space(6)
-              radius: height / 2
-              color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
-              Rectangle {
-                height: parent.height
-                radius: parent.radius
-                color: root.accent
-                width: root.stats ? parent.width * Math.min(1, root.stats.today_focus_minutes / root.goal) : 0
-                Behavior on width {
-                  enabled: !Style.reduceMotion
-                  NumberAnimation { duration: 500; easing.type: Easing.OutCubic }
-                }
-              }
-            }
-            Row {
-              x: Style.space(8)
-              spacing: Style.space(28)
-              Stat { statValue: root.stats ? String(root.stats.today_pomodoros) : "0"; statLabel: "POMODOROS" }
-              Stat { statValue: root.stats ? String(root.stats.today_tasks_done) : "0"; statLabel: "TASKS DONE" }
-              Stat { statValue: root.stats ? root.stats.streak_days + "d" : "0d"; statLabel: "STREAK" }
-              Stat {
-                statValue: root.stats && root.stats.completion_rate !== null ? Math.round(root.stats.completion_rate * 100) + "%" : "—"
-                statLabel: "FINISHED"
-              }
-            }
-          }
-
-          Divider { visible: !!root.stats }
-
-          // ---- Last seven days and a twelve-week heatmap, side by side.
-          Row {
-            width: parent.width
-            spacing: Style.space(20)
-            visible: !!root.stats
-
-            Column {
-              id: weekColumn
-              spacing: Style.space(6)
-
-              SectionLabel { text: "7 DAYS · " + (root.stats ? Model.minutesLabel(root.stats.week_focus_minutes) : "") }
-
-              Row {
-                x: Style.space(8)
-                spacing: Style.space(8)
-                height: Style.space(64)
-
-                Repeater {
-                  model: root.stats ? root.stats.week : []
-
-                  Column {
-                    required property var modelData
-                    required property int index
-                    spacing: Style.space(4)
-                    anchors.bottom: parent.bottom
-
-                    Rectangle {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      width: Style.space(14)
-                      radius: Style.space(3)
-                      height: Math.max(Style.space(3), Style.space(44) * modelData.minutes / Math.max(Model.weekMax(root.stats.week), 1))
-                      color: modelData.minutes > 0 ? root.accent : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.15)
-                      opacity: index === 6 ? 1 : 0.75
-                    }
-                    Text {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      textFormat: Text.PlainText
-                      text: modelData.label.substring(0, 2)
-                      color: index === 6 ? root.fg : root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
-              }
-            }
-
-            Column {
-              spacing: Style.space(6)
-
-              SectionLabel { text: "12 WEEKS" }
-
-              Row {
-                x: Style.space(8)
-                spacing: Style.space(3)
-
-                Repeater {
-                  model: Model.heatColumns(root.model ? root.model.heatmap : [], root.goal)
-
-                  Column {
-                    required property var modelData
-                    spacing: Style.space(3)
-
-                    Repeater {
-                      model: modelData
-
-                      Rectangle {
-                        required property var modelData
-                        width: Style.space(7)
-                        height: width
-                        radius: Style.space(2)
-                        visible: modelData !== null
-                        color: modelData && modelData.level > 0 ? root.accent : root.fg
-                        opacity: modelData ? [0.1, 0.3, 0.5, 0.75, 1][modelData.level] : 0
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          Text {
-            width: parent.width
-            horizontalAlignment: Text.AlignHCenter
-            textFormat: Text.PlainText
-            text: "↵ start/pause · s stop · g guard · o open app"
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-          }
+          TimerPage { id: timerPage; ctx: root; width: parent.width; visible: root.tab === 0 }
+          TasksPage { id: tasksPage; ctx: root; width: parent.width; visible: root.tab === 1 }
+          SitesPage { id: sitesPage; ctx: root; width: parent.width; visible: root.tab === 2 }
+          StatsPage { id: statsPage; ctx: root; width: parent.width; visible: root.tab === 3 }
+          SettingsPage { id: settingsPage; ctx: root; width: parent.width; visible: root.tab === 4 }
         }
       }
-    }
-  }
 
-  component Divider: Rectangle {
-    width: parent ? parent.width : 0
-    height: Style.spacing.hairline
-    color: root.fg
-    opacity: 0.12
-  }
-
-  component SectionLabel: Text {
-    x: Style.space(8)
-    textFormat: Text.PlainText
-    color: root.dim
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.caption
-    font.letterSpacing: 1
-  }
-
-  component Stat: Column {
-    property string statValue: ""
-    property string statLabel: ""
-    spacing: Style.space(2)
-    Text {
-      textFormat: Text.PlainText
-      text: parent.statValue
-      color: root.fg
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.title
-    }
-    Text {
-      textFormat: Text.PlainText
-      text: parent.statLabel
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.letterSpacing: 1
-    }
-  }
-
-  // Circular progress ring, 0..1 clockwise from 12 o'clock.
-  component Ring: Canvas {
-    property real progress: 0
-    property real thickness: 6
-    property color trackColor: "#33ffffff"
-    property color fillColor: "white"
-
-    onProgressChanged: requestPaint()
-    onTrackColorChanged: requestPaint()
-    onFillColorChanged: requestPaint()
-    onWidthChanged: requestPaint()
-    onHeightChanged: requestPaint()
-
-    onPaint: {
-      var ctx = getContext("2d")
-      ctx.reset()
-      var radius = Math.min(width, height) / 2 - thickness / 2
-      var cx = width / 2
-      var cy = height / 2
-      ctx.lineWidth = thickness
-      ctx.lineCap = "round"
-
-      ctx.strokeStyle = trackColor
-      ctx.beginPath()
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-      ctx.stroke()
-
-      var value = Math.max(0, Math.min(1, progress))
-      if (value <= 0) return
-      ctx.strokeStyle = fillColor
-      ctx.beginPath()
-      ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + value * Math.PI * 2)
-      ctx.stroke()
+      // Where you are in a page too tall for the screen.
+      Rectangle {
+        visible: scroller.interactive
+        anchors.right: scroller.right
+        y: scroller.y + scroller.visibleArea.yPosition * scroller.height
+        width: Style.space(3)
+        height: Math.max(Style.space(24), scroller.visibleArea.heightRatio * scroller.height)
+        radius: width / 2
+        color: root.track
+      }
     }
   }
 }

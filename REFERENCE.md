@@ -6,23 +6,28 @@
 src/omarchy_focus/
 ├── cli.py                 # argparse entry point (omarchy-focus, clar-focus)
 ├── bar.py                 # status --json payload for the widget, bar/waybar text
-├── charts.py              # heatmap, hour histogram and bars for CLI + TUI
+├── charts.py              # heatmap, hour histogram and bars for `stats`
 ├── widget.py              # omarchy-focus widget install|remove
 ├── shell_widget/          # the Omarchy Shell plugin (QML), shipped in the wheel
 │   ├── manifest.json
-│   ├── BarWidget.qml      # pill, data loading, inotify watch, IPC
-│   ├── FocusPanel.qml     # popup: ring, controls, tasks, goal, 7 days, heatmap
+│   ├── BarWidget.qml      # pill, data loading, action queue, inotify watch, IPC
+│   ├── FocusPanel.qml     # the panel's frame: tabs, scrolling, keys, strings
+│   ├── TimerPage.qml      # Focus: ring, session length, change the time, breaks
+│   ├── TasksPage.qml      # Tasks: add, filter, search, sort (TaskRow, TaskEditor)
+│   ├── SitesPage.qml      # Sites: the guard and its list
+│   ├── StatsPage.qml      # Stats: goal, week, heatmap, hours, top tasks and sites
+│   ├── SettingsPage.qml   # Settings: lengths, goal, guard defaults
+│   ├── i18n/              # en.json, tr.json
 │   └── Model.js           # pure helpers, unit-tested with node
 ├── database.py            # SQLite + versioned migrations
 ├── focus_hosts_helper.py  # the only code that runs as root
 ├── paths.py               # XDG paths, migration from Clar Focus
-├── services/              # tasks, pomodoro, focus guard, stats
-└── tui/                   # Textual app
+└── services/              # tasks, pomodoro, focus guard, stats
 ```
 
 ## How the bar widget stays cheap
 
-1. Every state change (CLI, TUI, timer) calls `poke_status_bar()`, which writes `$XDG_RUNTIME_DIR/omarchy-focus.changed`.
+1. Every state change (panel, CLI, timer) calls `poke_status_bar()`, which writes `$XDG_RUNTIME_DIR/omarchy-focus.changed`.
 2. The widget watches that file (`FileView` + inotify) and runs `omarchy-focus status --json` once, debounced.
 3. The JSON carries `ends_at_ms`, so the countdown and progress ring tick locally in QML.
 4. When a countdown reaches zero, the widget refreshes once so the CLI can record the session and queue the break. A 30 s heartbeat (configurable) covers day rollover.
@@ -35,6 +40,14 @@ Refreshing is read-only: the countdown is derived from `ends_at` instead of bein
 | Cost per spawn | ~140 ms | ~80 ms |
 | SQLite writes per refresh | several | none |
 | Latency after start/stop | up to 2 s | instant |
+
+### Actions go over stdin
+
+Process arguments are readable by every local user through `/proc`, so the widget never puts task titles or domains on a command line. It runs `omarchy-focus --args-from-stdin` and writes the arguments as one line of JSON. Actions run one at a time from a queue, so quick clicks or a password dialog holding things up never lose one.
+
+### Loading the panel
+
+The shell loads plugins from a `qs://` URL, where QML can't see sibling files as types. `BarWidget.qml` loads `FocusPanel.qml` through `file://`, which is where the pages resolve. A cache-busting `?v=` query on that URL breaks sibling lookup too.
 
 ### Widget settings
 
@@ -49,26 +62,29 @@ IPC: `omarchy-shell omarchy-focus toggle|open|close|refresh`.
 
 ### `status --json`
 
-Schema `1`. Keys: `pomodoro` (`phase`, `type`, `remaining_seconds`, `total_seconds`, `ends_at_ms`, `task_id`, `task_title`, `cycle`), `pending_break`, `focus` (`active`, `strict`, `sites`, `ends_at_ms`, `consistent`), `stats` (`today_*`, `goal_minutes`, `week_focus_minutes`, `streak_days`, `completion_rate`, `week[]`), `heatmap[]` (84 days), `next_tasks[]`, `settings`. Keys from 0.1 are kept.
+Schema `2`. Keys: `pomodoro` (`phase`, `type`, `remaining_seconds`, `total_seconds`, `ends_at_ms`, `task_id`, `task_title`, `cycle`, `auto_focus`, `strict_focus`), `pending_break`, `focus` (`active`, `strict`, `sites`, `ends_at_ms`, `consistent`), `stats` (`today_*`, `goal_minutes`, `week_*`, `streak_days`, `completion_rate`, `week[]`, `top_tasks[]`, `blocked_sites[]`, `hours[24]`, `peak_start`), `heatmap[]` (84 days), `next_tasks[]`, `tasks[]` (every open task, then the last 50 done and 50 archived), `sites[]`, `settings`, `passwordless_guard`. Keys from earlier schemas are kept.
 
 ## CLI
 
 ```bash
-omarchy-focus                         # TUI (same as: omarchy-focus tui)
+omarchy-focus                         # opens the bar panel (same as: omarchy-focus panel)
 omarchy-focus status [--json]
 omarchy-focus stats [--json | --md] [--weeks 17]
 
 omarchy-focus add-task "Title" --priority high --tags "work docs" --estimate 50 --due "2026-10-20 15:00"
 omarchy-focus tasks list [--today] [--completed] [--search text]
-omarchy-focus tasks edit 3 --status in_progress
+omarchy-focus tasks edit 3 --status in_progress [--clear-estimate] [--clear-due]
 omarchy-focus tasks done 3 | delete 3
 
-omarchy-focus start [--task-id 3] [--minutes 25] [--focus | --no-focus] [--strict]
+omarchy-focus start [--task-id 3] [--minutes 25] [--focus | --no-focus] [--strict | --no-strict]
 omarchy-focus pause | resume | stop | toggle
+omarchy-focus adjust 5                # more time in this session; -5 for less
+omarchy-focus assign --task-id 3      # keep the clock, change the task (or --clear)
 omarchy-focus break [start | skip] [--minutes 15]
 
-omarchy-focus focus on --minutes 50 [--strict] [--site x.com]
+omarchy-focus focus on --minutes 50 [--strict | --no-strict] [--site x.com]
 omarchy-focus focus off [--force] | status [--json] | recover
+omarchy-focus focus adjust 5          # more time on a timed guard; -5 for less
 omarchy-focus focus add-site youtube.com | remove-site x.com | enable-site | disable-site
 
 omarchy-focus settings show [--json]
@@ -88,12 +104,12 @@ omarchy-focus widget install | remove | path
 | `focus_on_pomodoro_start` | false | Start the site guard with every session |
 | `strict_mode_default` | false | Guard can't be turned off before it ends |
 | `focus_auto_release` | true | Unblock sites when a timed guard ends |
-| `open_app_on_complete` | false | Raise the TUI when a session ends |
+| `guard_minutes` | 50 | Length offered when starting the guard on its own |
 | `notifications_enabled` | true | Desktop notifications |
 
-## TUI keys
+## Panel keys
 
-`s` start/stop · `p` pause/resume · `m` site guard · `a` add · `e` edit · `x` done · `d` delete · `/` search · `f` filter · `b` blocked sites · `g` Now · `t` Tasks · `i` Statistics · `,` Settings · `F2` light/dark · `?` help · `q` quit
+`1`–`5` or `h`/`l` pages · `j`/`k` scroll · `Enter` start/pause · `+`/`-` a minute more or less · `a` add task · `s` start/stop · `p` pause/resume · `g` guard · `b`/`n` take/skip break · `Tab` next panel in the bar · `Esc` leave a field, then close
 
 ## Site guard
 
@@ -140,8 +156,9 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 # Demo data and screenshots, isolated from your real database:
 export XDG_DATA_HOME=/tmp/of-demo
 python scripts/demo_data.py
-python scripts/tui_screenshots.py screenshots/
 omarchy-focus widget install          # then set "command" on the widget to a wrapper that exports XDG_DATA_HOME
 ```
 
 Editing the QML in `~/.config/omarchy/plugins/omarchy-focus/` hot-reloads. The shell caches files it has already compiled, so after renaming a QML file or changing `Model.js`, run `omarchy restart shell`.
+
+Don't test on your own desktop: a run that reaches `focus on` brings up the real password dialog. Point `command` at a wrapper that exports `XDG_DATA_HOME` and puts stub `pkexec` and `sudo` first in `PATH`.

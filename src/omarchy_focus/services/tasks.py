@@ -259,6 +259,17 @@ class TaskService:
         )
         return [self._row_to_task(row) for row in rows]
 
+    def list_for_panel(self, *, open_limit: int = 200, closed_limit: int = 50) -> list[Task]:
+        """Everything the bar panel can show: open tasks, then recent closed ones."""
+        tasks = self.list_open(limit=open_limit)
+        for status in (TaskStatus.DONE, TaskStatus.ARCHIVED):
+            rows = self.db.fetchall(
+                "SELECT * FROM tasks WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                (status.value, closed_limit),
+            )
+            tasks.extend(self._row_to_task(row) for row in rows)
+        return tasks
+
     def get_next_focus_candidate(self) -> Task | None:
         candidates = self.list_open(limit=1)
         return candidates[0] if candidates else None

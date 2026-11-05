@@ -150,7 +150,6 @@ class ServiceFlowTest(unittest.TestCase):
             patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=25)),
             patch("omarchy_focus.services.pomodoro.remaining_seconds", return_value=0),
             patch("omarchy_focus.services.pomodoro.play_alert_sound"),
-            patch("omarchy_focus.services.pomodoro.focus_app_tui"),
         ):
             self.pomodoro.tick()
         row = self.db.fetchone("SELECT duration_seconds, completed FROM pomodoro_sessions")
@@ -171,7 +170,6 @@ class ServiceFlowTest(unittest.TestCase):
         task = self.tasks.add_task("Deep work")
         with (
             patch("omarchy_focus.services.pomodoro.play_alert_sound") as play_sound,
-            patch("omarchy_focus.services.pomodoro.focus_app_tui") as focus_tui,
         ):
             self.pomodoro.start(task_id=task.id, minutes=1, auto_focus=False)
             raw = self.pomodoro._load_raw()
@@ -189,7 +187,6 @@ class ServiceFlowTest(unittest.TestCase):
         self.assertEqual(pending_break["task_title"], task.title)
         self.assertIsNone(self.pomodoro._load_raw())
         play_sound.assert_called_once()
-        focus_tui.assert_not_called()  # opt-in via open_app_on_complete
 
         break_snapshot = self.pomodoro.start_break()
         self.assertEqual(break_snapshot.phase.value, "running")
@@ -266,7 +263,6 @@ class ServiceFlowTest(unittest.TestCase):
         self.pomodoro._save_raw(raw)
         with (
             patch("omarchy_focus.services.pomodoro.play_alert_sound"),
-            patch("omarchy_focus.services.pomodoro.focus_app_tui"),
         ):
             self.pomodoro.tick()
 
@@ -312,22 +308,6 @@ class ServiceFlowTest(unittest.TestCase):
         names = {row["name"] for row in rows}
         for expected in ("idx_tasks_status", "idx_pomodoro_lookup", "idx_focus_active"):
             self.assertIn(expected, names)
-
-    def test_theme_setting_roundtrip(self) -> None:
-        from omarchy_focus.tui.app import (
-            DAYLIGHT_GOLD,
-            MIDNIGHT_GOLD,
-            THEME_SETTING_KEY,
-            THEMES_BY_NAME,
-        )
-
-        # Default matches the dark signature theme and both themes are known.
-        self.assertEqual(self.settings.get(THEME_SETTING_KEY), MIDNIGHT_GOLD.name)
-        self.assertIn(MIDNIGHT_GOLD.name, THEMES_BY_NAME)
-        self.assertIn(DAYLIGHT_GOLD.name, THEMES_BY_NAME)
-        # The toggle persists the light theme so it survives a restart.
-        self.settings.set(THEME_SETTING_KEY, DAYLIGHT_GOLD.name)
-        self.assertEqual(self.settings.get(THEME_SETTING_KEY), DAYLIGHT_GOLD.name)
 
     def test_stats_markdown_report(self) -> None:
         from omarchy_focus.cli import _render_stats_markdown

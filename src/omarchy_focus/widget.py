@@ -18,7 +18,7 @@ from typing import Any
 
 WIDGET_ID = "omarchy-focus"
 WIDGET_SOURCE = Path(__file__).with_name("shell_widget")
-WIDGET_FILES = ("manifest.json", "BarWidget.qml", "FocusPanel.qml", "Model.js")
+WIDGET_PATTERNS = ("manifest.json", "*.qml", "*.js", "i18n/*.json")
 OMARCHY_DIR = Path.home() / ".config" / "omarchy"
 PLUGIN_DIR = OMARCHY_DIR / "plugins" / WIDGET_ID
 SHELL_CONFIG = OMARCHY_DIR / "shell.json"
@@ -26,6 +26,10 @@ SHELL_CONFIG = OMARCHY_DIR / "shell.json"
 SECTIONS = ("left", "center", "right")
 LEGACY_IDS = {"clarfocus", "omarchy-focus-command"}
 LEGACY_EXEC_MARKERS = ("clar-focus-bar", "omarchy-focus-bar", "clar-focus-waybar")
+
+
+def widget_files() -> list[Path]:
+    return [path for pattern in WIDGET_PATTERNS for path in sorted(WIDGET_SOURCE.glob(pattern))]
 
 
 def is_legacy_entry(item: Any) -> bool:
@@ -115,11 +119,14 @@ def install_widget(*, place: bool = True) -> list[str]:
     messages = []
     upgrade = PLUGIN_DIR.exists()
     PLUGIN_DIR.mkdir(parents=True, exist_ok=True)
-    for stale in PLUGIN_DIR.glob("*"):
-        if stale.is_file() and stale.suffix in {".qml", ".js", ".json"}:
-            stale.unlink()
-    for name in WIDGET_FILES:
-        shutil.copyfile(WIDGET_SOURCE / name, PLUGIN_DIR / name)
+    for pattern in ("*.qml", "*.js", "*.json", "i18n/*.json"):
+        for stale in PLUGIN_DIR.glob(pattern):
+            if stale.is_file():
+                stale.unlink()
+    for source in widget_files():
+        target = PLUGIN_DIR / source.relative_to(WIDGET_SOURCE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
     _shell("shell", "rescanPlugins")
     messages.append(("Upgraded" if upgrade else "Installed") + f" widget in {PLUGIN_DIR}")
     if place:

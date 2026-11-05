@@ -6,14 +6,15 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Omarchy Focus bar pill.
+// Omarchy Focus bar pill, and the only way in: the panel it opens does
+// everything (timer, tasks, sites, stats, settings).
 //
 // Data flow: `omarchy-focus status --json` runs only when something changes.
 // The CLI touches $XDG_RUNTIME_DIR/omarchy-focus.changed after every state
-// change and this widget watches that file, so start/stop/task edits from
-// the TUI, CLI or keybindings show up instantly. Between refreshes the
-// countdown is computed locally from `ends_at_ms`, so no process runs per
-// second. A slow heartbeat catches day rollover and session expiry.
+// change and this widget watches that file, so changes from the panel, CLI or
+// keybindings show up instantly. Between refreshes the countdown is computed
+// locally from `ends_at_ms`, so no process runs per second. A slow heartbeat
+// catches day rollover and session expiry.
 BarWidget {
   id: root
   moduleName: "omarchy-focus"
@@ -22,20 +23,36 @@ BarWidget {
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ("/tmp/" + Quickshell.env("UID"))
   readonly property string cli: String(setting("command", "omarchy-focus"))
   readonly property int refreshSec: Math.max(10, parseInt(setting("refreshIntervalSec", 30), 10) || 30)
-  readonly property int guardMinutes: Math.max(5, parseInt(setting("guardMinutes", 50), 10) || 50)
   readonly property bool showIdleCount: setting("showIdleCount", true) !== false
 
   property var state: null
+  // Split out of `state` and only replaced when they really change, so a
+  // refresh doesn't rebuild the lists the user is hovering or scrolling.
+  property var tasks: []
+  property var sites: []
+  property var heatmap: []
+  property var stats: null
+  property var signatures: ({})
+
   property string error: ""
+  property string actionError: ""
   property double nowMs: Date.now()
   property bool refreshQueued: false
-  readonly property double loadStamp: Date.now()
+
+  // Actions run one at a time, in order, so quick clicks on a stepper or a
+  // password dialog holding up the queue never lose a click.
+  property var actionQueue: []
+  property string actionPayload: ""
+
+  property real wheelAccumulator: 0
+  property int wheelMinutes: 0
 
   readonly property string mode: Model.mode(state)
-  readonly property bool ticking: mode === "work" || mode === "break" || (mode === "guard" && !!(state && state.focus.ends_at_ms))
+  readonly property string guardState: Model.guardState(state, nowMs)
+  readonly property bool hasSession: mode === "work" || mode === "break" || mode === "paused"
+  readonly property bool ticking: mode === "work" || mode === "break" || guardState === "timed"
   readonly property real progress: Model.progress(state, nowMs)
   readonly property int remaining: Model.remaining(state, nowMs)
-  readonly property bool hasSession: mode === "work" || mode === "break" || mode === "paused"
 
   // A login shell resolves the CLI through PATH, so pacman (/usr/bin), pip
   // and install.sh (~/.local/bin) installs all work.
@@ -51,19 +68,54 @@ BarWidget {
     stateProc.running = true
   }
 
-  // Runs a CLI subcommand, then refreshes. Commands that need root (the site
-  // guard) get a polkit dialog from the CLI because there is no terminal.
+  function keep(name, value) {
+    var signature = JSON.stringify(value)
+    if (signatures[name] === signature) return
+    signatures[name] = signature
+    root[name] = value
+  }
+
+  function applyState(parsed) {
+    if (!parsed.schema || parsed.schema < 2) {
+      root.error = "This widget needs a newer omarchy-focus CLI (0.3 or later)"
+      return
+    }
+    root.state = parsed
+    root.error = ""
+    root.nowMs = Date.now()
+    keep("tasks", parsed.tasks || [])
+    keep("sites", parsed.sites || [])
+    keep("heatmap", parsed.heatmap || [])
+    keep("stats", parsed.stats || null)
+  }
+
+  // Runs a CLI command, then refreshes. Arguments travel over stdin: task
+  // titles and domains on a command line are readable by every local user
+  // through /proc. Commands that need root (the site guard) get a polkit
+  // dialog from the CLI because there is no terminal.
   function act(args) {
-    actionProc.command = root.argv(args)
+    actionQueue.push(args)
+    drainActions()
+  }
+
+  function drainActions() {
+    if (actionProc.running || actionQueue.length === 0) return
+    actionPayload = JSON.stringify(actionQueue.shift()) + "\n"
+    actionProc.stdinEnabled = true
     actionProc.running = true
   }
 
-  function openApp() {
-    Quickshell.execDetached(["bash", "-lc", "omarchy-launch-or-focus-tui omarchy-focus tui || xdg-terminal-exec -e omarchy-focus tui"])
+  function reportActionError(message) {
+    if (root.opened) {
+      root.actionError = message
+      actionErrorClear.restart()
+    } else {
+      Quickshell.execDetached(["notify-send", "-a", "Omarchy Focus", "Omarchy Focus", message])
+    }
   }
 
   function startPomodoro(taskId) {
-    act(taskId ? ["start", "--task-id", String(taskId)] : ["start"])
+    act(Model.startArgs(taskId, 0, null))
   }
 
   function primaryAction() {
@@ -73,9 +125,19 @@ BarWidget {
     else startPomodoro(0)
   }
 
+  function guardOn(minutes, strict) {
+    act(Model.guardArgs(minutes, strict))
+  }
+
   function toggleGuard() {
     if (state && state.focus && state.focus.active) act(["focus", "off"])
-    else act(["focus", "on", "--minutes", String(guardMinutes)])
+    else if (state) guardOn(state.settings.guard_minutes, state.settings.strict_mode_default)
+  }
+
+  // Adds to whatever is counting down: the session, else the guard.
+  function adjust(minutes) {
+    if (hasSession) act(["adjust", String(minutes)])
+    else if (guardState === "timed") act(["focus", "adjust", String(minutes)])
   }
 
   // Shape contract for shell summon/hide/toggle routing (see the weather
@@ -120,9 +182,7 @@ BarWidget {
         var raw = String(text || "").trim()
         if (!raw) return
         try {
-          root.state = JSON.parse(raw)
-          root.error = ""
-          root.nowMs = Date.now()
+          root.applyState(JSON.parse(raw))
         } catch (e) {
           root.error = "Unreadable status from " + root.cli
         }
@@ -151,14 +211,30 @@ BarWidget {
 
   Process {
     id: actionProc
+    command: root.argv(["--args-from-stdin"])
+    stdinEnabled: true
+    onStarted: {
+      write(root.actionPayload)
+      stdinEnabled = false
+    }
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var message = String(text || "").trim()
-        if (message) Quickshell.execDetached(["notify-send", "-a", "Omarchy Focus", "Omarchy Focus", message.split("\n").pop()])
+        if (message) root.reportActionError(message.split("\n").pop())
       }
     }
-    onExited: root.refresh()
+    onRunningChanged: {
+      if (running) return
+      if (root.actionQueue.length > 0) Qt.callLater(root.drainActions)
+      else Qt.callLater(root.refresh)
+    }
+  }
+
+  Timer {
+    id: actionErrorClear
+    interval: 8000
+    onTriggered: root.actionError = ""
   }
 
   FileView {
@@ -188,9 +264,11 @@ BarWidget {
     running: root.ticking
     onTriggered: {
       root.nowMs = Date.now()
-      // At zero the CLI must record the session and queue the break.
+      // At zero the CLI must record the session and queue the break. A guard
+      // that reaches zero gets one refresh too: `ticking` goes false with it,
+      // so one that can't be released without root isn't polled every second.
       if (root.hasSession && root.remaining <= 0) root.refresh()
-      else if (root.mode === "guard" && Model.focusRemaining(root.state, root.nowMs) <= 0) root.refresh()
+      else if (root.guardState === "expired") root.refresh()
     }
   }
 
@@ -201,12 +279,24 @@ BarWidget {
     onTriggered: root.refresh()
   }
 
+  // Scrolling on the pill adds or takes minutes; a burst becomes one change.
+  Timer {
+    id: wheelCommit
+    interval: 180
+    onTriggered: {
+      var minutes = root.wheelMinutes
+      root.wheelMinutes = 0
+      if (minutes !== 0) root.adjust(minutes)
+    }
+  }
+
   Loader {
     id: panelLoader
     active: true
-    // The query defeats the engine's per-URL component cache, so a plugin
-    // hot-reload (or an upgrade) picks up the new popup without a restart.
-    source: Qt.resolvedUrl("FocusPanel.qml") + "?v=" + root.loadStamp
+    // The shell loads plugins from a qs:// URL, where QML can't see sibling
+    // files as types. Under file:// the panel finds its pages. The shell clears
+    // its component cache when a plugin reloads, so edits are still picked up.
+    source: String(Qt.resolvedUrl("FocusPanel.qml")).replace(/^qs:\/\//, "file://")
     visible: false
     onLoaded: {
       root.injectPanel()
@@ -228,6 +318,15 @@ BarWidget {
       else if (b === Qt.MiddleButton) root.toggleGuard()
       else root.toggle()
     }
+
+    onWheelMoved: function(delta) {
+      if (!root.hasSession && root.guardState !== "timed") return
+      var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
+      root.wheelAccumulator = wheel.remainder
+      if (wheel.steps === 0) return
+      root.wheelMinutes += wheel.steps
+      wheelCommit.restart()
+    }
   }
 
   // Session progress as a hairline under the pill.
@@ -245,7 +344,7 @@ BarWidget {
 
     Behavior on width {
       enabled: !Style.reduceMotion
-      NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
+      NumberAnimation { duration: Style.duration(400); easing.type: Easing.OutCubic }
     }
   }
 
@@ -258,5 +357,8 @@ BarWidget {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh() }
+    function tab(name: string): void { if (panelLoader.item) panelLoader.item.openTab(name) }
+    // Whether the panel loaded, for checking an install without opening it.
+    function health(): string { return panelLoader.status === Loader.Ready ? "ready" : "panel failed to load" }
   }
 }

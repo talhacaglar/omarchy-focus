@@ -8,14 +8,13 @@ from datetime import timedelta
 from typing import Any
 
 from ..database import Database
-from ..exceptions import PomodoroError
+from ..exceptions import FocusModeError, PomodoroError
 from ..models import PomodoroStateSnapshot, SessionPhase, SessionType
 from ..notifications import notify
 from ..settings import SettingsService
 from ..utils import (
     current_boot_id,
     elapsed_seconds,
-    focus_app_tui,
     json_dumps,
     parse_dt,
     play_alert_sound,
@@ -104,6 +103,9 @@ class PomodoroService:
     # A gap this long between finished work sessions starts a fresh cycle, so
     # yesterday's last pomodoro doesn't count toward today's long break.
     CYCLE_RESET_AFTER = timedelta(hours=2)
+    # Bounds for extending or shortening a session that is already underway.
+    MIN_ADJUSTED_SECONDS = 60
+    MAX_ADJUSTED_SECONDS = 12 * 3600
 
     def _current_streak(self) -> int:
         row = self.db.get_state(self.STREAK_KEY)
@@ -213,7 +215,11 @@ class PomodoroService:
             strict_focus=bool(strict_focus),
         )
         focus_started = False
-        if auto_focus:
+        if auto_focus and self.focus.status(check_expiry=False).active:
+            # A guard the user started separately stays theirs: this session
+            # neither restarts it nor takes it down when it ends.
+            snapshot.auto_focus = False
+        elif auto_focus:
             self.focus.start(minutes=duration_minutes, strict_mode=strict_focus)
             focus_started = True
         try:
@@ -293,8 +299,64 @@ class PomodoroService:
         snapshot.ends_at = now + timedelta(seconds=snapshot.remaining_seconds)
         snapshot.boot_id = current_boot_id()
         self._save_raw(self._snapshot_to_raw(snapshot))
+        self._sync_linked_guard(snapshot)
         poke_status_bar()
         return snapshot
+
+    def adjust(self, minutes: int) -> PomodoroStateSnapshot:
+        """Extend (positive) or shorten (negative) the current session.
+
+        The planned length moves with it, so time already spent stays spent
+        and the progress ring doesn't jump. A session can't be shortened past
+        its last minute; stopping it is a separate, recorded decision.
+        """
+        snapshot = self.status()
+        if snapshot.phase not in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
+            raise PomodoroError("No session to adjust")
+        if minutes < 0 and snapshot.auto_focus and snapshot.strict_focus:
+            raise PomodoroError("Strict mode is active; this session can't be shortened")
+        before = snapshot.remaining_seconds
+        wanted = before + minutes * 60
+        after = max(min(before, self.MIN_ADJUSTED_SECONDS), min(wanted, self.MAX_ADJUSTED_SECONDS))
+        delta = after - before
+        if delta == 0:
+            return snapshot
+        snapshot.remaining_seconds = after
+        snapshot.total_seconds = max(after, snapshot.total_seconds + delta)
+        if snapshot.ends_at:
+            snapshot.ends_at += timedelta(seconds=delta)
+        self._save_raw(self._snapshot_to_raw(snapshot))
+        self._sync_linked_guard(snapshot)
+        poke_status_bar()
+        return snapshot
+
+    def assign_task(self, task_id: int | None) -> PomodoroStateSnapshot:
+        """Point the session underway at another task, or at none.
+
+        Starting on a task would stop the current session and record it as
+        interrupted; this keeps the clock running.
+        """
+        snapshot = self.status()
+        if snapshot.phase not in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
+            raise PomodoroError("No session to assign a task to")
+        title = None
+        if task_id is not None:
+            task = self.tasks.get_task(task_id)
+            title = task.title
+            if task.status == "pending":
+                self.tasks.update_task(task_id, status="in_progress")
+        snapshot.task_id = task_id
+        snapshot.task_title = title
+        self._save_raw(self._snapshot_to_raw(snapshot))
+        poke_status_bar()
+        return snapshot
+
+    def _sync_linked_guard(self, snapshot: PomodoroStateSnapshot) -> None:
+        """A guard started with this session ends with it, wherever that end moves."""
+        if not snapshot.auto_focus or not snapshot.ends_at:
+            return
+        with contextlib.suppress(FocusModeError):
+            self.focus.set_ends_at(snapshot.ends_at)
 
     def stop(self, *, reason: str = "stopped") -> PomodoroStateSnapshot:
         raw = self._load_raw()
@@ -361,8 +423,6 @@ class PomodoroService:
                 enabled=self.settings.get("notifications_enabled"),
             )
             play_alert_sound()
-            if self.settings.get("open_app_on_complete"):
-                focus_app_tui()
             poke_status_bar()
             return PomodoroStateSnapshot()
 
