@@ -308,10 +308,48 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.vertical ? Model.icon(root.state) : Model.pillText(root.state, root.nowMs, root.showIdleCount)
+    // A bare glyph takes the bar's icon path, so it matches the icons around
+    // it. With a time or count beside it, the glyph is drawn the same way and
+    // the text follows at label size.
+    readonly property string glyph: Model.icon(root.state)
+    readonly property string pill: Model.pillText(root.state, root.nowMs, root.showIdleCount)
+    readonly property string rest: pill.indexOf(glyph) === 0 ? pill.slice(glyph.length).trim() : pill
+    readonly property bool split: !root.vertical && rest !== ""
+    text: split ? pill : glyph
+    labelVisible: !split
+    fixedWidth: split ? pillRow.implicitWidth + scaledHorizontalMargin * 2 : -1
     centerFigures: false
     active: root.mode === "break-ready"
     tooltipText: root.error !== "" ? root.error : ""
+
+    Row {
+      id: pillRow
+      visible: button.split
+      anchors.centerIn: parent
+      spacing: Style.space(4)
+      scale: button.pressScale
+
+      OpticalGlyph {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.bar.iconCanvas
+        height: Style.bar.iconCanvas
+        text: button.glyph
+        fontFamily: button.fontFamily
+        fontSize: Style.bar.iconFont
+        paintedSize: Style.bar.iconSize
+        color: button.active ? button.activeColor : button.foreground
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: button.rest
+        color: button.active ? button.activeColor : button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        renderType: Text.NativeRendering
+      }
+    }
 
     onPressed: function(b) {
       if (b === Qt.RightButton) root.primaryAction()
