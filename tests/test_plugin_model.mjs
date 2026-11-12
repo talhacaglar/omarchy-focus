@@ -33,6 +33,22 @@ const paused = { ...running, pomodoro: { ...running.pomodoro, phase: "paused", r
 assert.equal(M.mode(paused), "paused")
 assert.equal(M.remaining(paused, now), 42)
 
+// A session with no timer counts up from its start, pauses left out.
+const openEnded = {
+  pomodoro: { phase: "running", type: "work", open_ended: true, ends_at_ms: null, started_at_ms: now - 125_000, paused_seconds: 5, total_seconds: 0, remaining_seconds: 0 },
+  focus: { active: false },
+  pending_break: null,
+}
+assert.equal(M.isOpenEnded(openEnded), true)
+assert.equal(M.isOpenEnded(running), false)
+assert.equal(M.elapsed(openEnded, now), 120)
+assert.equal(M.progress(openEnded, now), 0)
+assert.equal(M.pillText(openEnded, now, true), "󰄉 02:00")
+assert.equal(M.phaseKey(openEnded), "phase.openEnded")
+const openPaused = { ...openEnded, pomodoro: { ...openEnded.pomodoro, phase: "paused", elapsed_seconds: 61 } }
+assert.equal(M.elapsed(openPaused, now + 60_000), 61)
+assert.equal(M.pillText(openPaused, now, true), "󰏤 01:01")
+
 const idle = { pomodoro: { phase: "idle" }, focus: { active: false }, pending_break: null, pending_tasks: 3 }
 assert.equal(M.pillText(idle, now, true), "󰔛 3")
 assert.equal(M.pillText(idle, now, false), "󰔛")
@@ -63,6 +79,12 @@ assert.equal(M.guardState(idle, now), "off")
 assert.equal(M.guardState(guard, now), "timed")
 assert.equal(M.guardState(guard, now + 60_000), "expired")
 assert.equal(M.guardState({ ...idle, focus: { active: true, ends_at_ms: null } }, now), "manual")
+// The timer refreshes once per expired end, not every second.
+assert.equal(M.expiredGuardEnd(guard, now), 0)
+assert.equal(M.expiredGuardEnd(guard, now + 60_000), guard.focus.ends_at_ms)
+assert.equal(M.expiredGuardEnd(guard, now + 3_600_000), guard.focus.ends_at_ms)
+assert.equal(M.expiredGuardEnd(idle, now), 0)
+assert.equal(M.expiredGuardEnd(null, now), 0)
 
 assert.equal(M.phaseKey(running), "phase.focus")
 assert.equal(M.phaseKey(ready), "phase.breakReady")
@@ -97,10 +119,23 @@ assert.equal(M.dayStartMs(noon), new Date(2026, 10, 5).getTime())
 // Filters stay put for the whole day, or a countdown would rebuild the list.
 assert.equal(M.dayStartMs(noon + 3_600_000), M.dayStartMs(noon))
 
+// Steppers snap to their step, and go one at a time below fineBelow.
+assert.equal(M.stepValue(25, 1, 5, 5), 30)
+assert.equal(M.stepValue(25, -1, 5, 5), 20)
+assert.equal(M.stepValue(7, 1, 5, 5), 10) // typed in, off the grid
+assert.equal(M.stepValue(7, -1, 5, 5), 5)
+assert.equal(M.stepValue(5, -1, 5, 5), 4)
+assert.equal(M.stepValue(3, 1, 5, 5), 4)
+assert.equal(M.stepValue(4, 1, 5, 5), 5)
+assert.equal(M.stepValue(0, 1, 5, 5), 1) // from no timer
+assert.equal(M.stepValue(150, 1, 15, 0), 165) // no fine steps
+assert.equal(M.stepValue(0, 1, 5, 0), 5)
+
 // Arguments for the CLI: values can't turn into options.
 const list = (value) => JSON.stringify(Array.from(value))
 assert.equal(list(M.startArgs(7, 25, true)), list(["start", "--task-id", "7", "--minutes", "25", "--focus"]))
-assert.equal(list(M.startArgs(0, 0, null)), list(["start"]))
+assert.equal(list(M.startArgs(0, null, null)), list(["start"])) // the saved length
+assert.equal(list(M.startArgs(0, 0, null)), list(["start", "--open-ended"]))
 assert.equal(list(M.startArgs(0, 15, false)), list(["start", "--minutes", "15", "--no-focus"]))
 assert.equal(list(M.guardArgs(50, true)), list(["focus", "on", "--minutes", "50", "--strict"]))
 assert.equal(list(M.guardArgs(0, true)), list(["focus", "on", "--no-strict"])) // strict needs a timer

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..database import Database
@@ -25,6 +25,12 @@ from ..utils import (
 )
 from .focus import FocusService
 from .tasks import TaskService
+
+
+def session_elapsed_seconds(snapshot: PomodoroStateSnapshot, end: datetime | None = None) -> int:
+    """Time spent in the session up to `end` (by default now), pauses left out."""
+    end = end or snapshot.paused_at or utc_now()
+    return max(0, elapsed_seconds(snapshot.started_at, end) - snapshot.paused_seconds)
 
 
 class PomodoroService:
@@ -80,6 +86,7 @@ class PomodoroService:
             cycle_count=int(raw.get("cycle_count", 0)),
             auto_focus=bool(raw.get("auto_focus", False)),
             strict_focus=bool(raw.get("strict_focus", False)),
+            open_ended=bool(raw.get("open_ended", False)),
         )
 
     def _snapshot_to_raw(self, snapshot: PomodoroStateSnapshot) -> dict[str, Any]:
@@ -98,6 +105,7 @@ class PomodoroService:
             "cycle_count": snapshot.cycle_count,
             "auto_focus": snapshot.auto_focus,
             "strict_focus": snapshot.strict_focus,
+            "open_ended": snapshot.open_ended,
         }
 
     # A gap this long between finished work sessions starts a fresh cycle, so
@@ -106,6 +114,8 @@ class PomodoroService:
     # Bounds for extending or shortening a session that is already underway.
     MIN_ADJUSTED_SECONDS = 60
     MAX_ADJUSTED_SECONDS = 12 * 3600
+    # An open-ended session shorter than this was a misclick, not focus time.
+    MIN_OPEN_ENDED_SECONDS = 60
 
     def _current_streak(self) -> int:
         row = self.db.get_state(self.STREAK_KEY)
@@ -182,16 +192,30 @@ class PomodoroService:
         minutes: int | None = None,
         auto_focus: bool | None = None,
         strict_focus: bool | None = None,
+        open_ended: bool = False,
     ) -> PomodoroStateSnapshot:
+        """Start a work session.
+
+        Without `minutes` it is as long as `pomodoro_work_minutes`, where 0
+        means no timer. An `open_ended` session has no end: it counts up
+        until it is stopped, and a guard started with it stays on until then.
+        """
+        if minutes is not None and minutes < 0:
+            raise PomodoroError("A session can't be shorter than nothing")
         current = self._raw_to_snapshot(self._load_raw())
         if current.phase in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
             self.stop(reason="restarted")
 
         auto_focus = self.settings.get("focus_on_pomodoro_start") if auto_focus is None else auto_focus
         strict_focus = self.settings.get("strict_mode_default") if strict_focus is None else strict_focus
-        duration_minutes = minutes or int(self.settings.get("pomodoro_work_minutes"))
+        duration_minutes = 0 if open_ended else minutes or int(self.settings.get("pomodoro_work_minutes"))
+        open_ended = duration_minutes <= 0
+        if open_ended:
+            # Strict mode holds a guard until its time is up; this one has none.
+            duration_minutes = 0
+            strict_focus = False
         started_at = utc_now()
-        ends_at = started_at + timedelta(minutes=duration_minutes)
+        ends_at = None if open_ended else started_at + timedelta(minutes=duration_minutes)
         task_title = None
         self.clear_pending_break()
         if task_id:
@@ -213,6 +237,7 @@ class PomodoroService:
             cycle_count=self._current_streak(),
             auto_focus=bool(auto_focus),
             strict_focus=bool(strict_focus),
+            open_ended=open_ended,
         )
         focus_started = False
         if auto_focus and self.focus.status(check_expiry=False).active:
@@ -220,7 +245,7 @@ class PomodoroService:
             # neither restarts it nor takes it down when it ends.
             snapshot.auto_focus = False
         elif auto_focus:
-            self.focus.start(minutes=duration_minutes, strict_mode=strict_focus)
+            self.focus.start(minutes=duration_minutes or None, strict_mode=bool(strict_focus))
             focus_started = True
         try:
             self._save_raw(self._snapshot_to_raw(snapshot))
@@ -231,7 +256,9 @@ class PomodoroService:
             raise
         notify(
             "Pomodoro started",
-            f"{duration_minutes} minute focus session",
+            "No timer: stop it when you're done"
+            if open_ended
+            else f"{duration_minutes} minute focus session",
             enabled=self.settings.get("notifications_enabled"),
         )
         poke_status_bar()
@@ -296,7 +323,9 @@ class PomodoroService:
         if snapshot.paused_at:
             snapshot.paused_seconds += elapsed_seconds(snapshot.paused_at, now)
         snapshot.paused_at = None
-        snapshot.ends_at = now + timedelta(seconds=snapshot.remaining_seconds)
+        snapshot.ends_at = (
+            None if snapshot.open_ended else now + timedelta(seconds=snapshot.remaining_seconds)
+        )
         snapshot.boot_id = current_boot_id()
         self._save_raw(self._snapshot_to_raw(snapshot))
         self._sync_linked_guard(snapshot)
@@ -313,6 +342,8 @@ class PomodoroService:
         snapshot = self.status()
         if snapshot.phase not in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
             raise PomodoroError("No session to adjust")
+        if snapshot.open_ended:
+            raise PomodoroError("This session has no timer to change")
         if minutes < 0 and snapshot.auto_focus and snapshot.strict_focus:
             raise PomodoroError("Strict mode is active; this session can't be shortened")
         before = snapshot.remaining_seconds
@@ -363,7 +394,14 @@ class PomodoroService:
         if not raw:
             return PomodoroStateSnapshot()
         snapshot = self._raw_to_snapshot(raw)
-        self._record_session(snapshot, completed=False, interrupted=True, note=reason)
+        if snapshot.open_ended:
+            # A session with no timer has no length to fall short of: stopping it is
+            # how it finishes.
+            finished = session_elapsed_seconds(snapshot) >= self.MIN_OPEN_ENDED_SECONDS
+            note = "open-ended session ended" if finished else reason
+            self._record_session(snapshot, completed=finished, interrupted=not finished, note=note)
+        else:
+            self._record_session(snapshot, completed=False, interrupted=True, note=reason)
         self.db.delete_state(self.STATE_KEY)
         if snapshot.auto_focus and self.focus.status(check_expiry=False).active:
             with contextlib.suppress(Exception):
@@ -451,7 +489,7 @@ class PomodoroService:
             effective_end = snapshot.ends_at
         elif snapshot.paused_at:
             effective_end = snapshot.paused_at
-        duration = max(0, elapsed_seconds(snapshot.started_at, effective_end) - snapshot.paused_seconds)
+        duration = session_elapsed_seconds(snapshot, effective_end)
         self.db.execute(
             """
             INSERT INTO pomodoro_sessions (

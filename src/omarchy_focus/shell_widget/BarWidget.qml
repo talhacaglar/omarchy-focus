@@ -44,12 +44,17 @@ BarWidget {
   property var actionQueue: []
   property string actionPayload: ""
 
+  // The expired guard already refreshed for (its end, ms). See the countdown.
+  property double refreshedGuardEnd: 0
+
   property real wheelAccumulator: 0
   property int wheelMinutes: 0
 
   readonly property string mode: Model.mode(state)
   readonly property string guardState: Model.guardState(state, nowMs)
   readonly property bool hasSession: mode === "work" || mode === "break" || mode === "paused"
+  // A session with no timer counts up and has no end to move.
+  readonly property bool openEnded: Model.isOpenEnded(state)
   readonly property bool ticking: mode === "work" || mode === "break" || guardState === "timed"
   readonly property real progress: Model.progress(state, nowMs)
   readonly property int remaining: Model.remaining(state, nowMs)
@@ -114,8 +119,9 @@ BarWidget {
     }
   }
 
+  // Without a length the CLI uses the saved one: the last picked in the panel.
   function startPomodoro(taskId) {
-    act(Model.startArgs(taskId, 0, null))
+    act(Model.startArgs(taskId, null, null))
   }
 
   function primaryAction() {
@@ -136,8 +142,9 @@ BarWidget {
 
   // Adds to whatever is counting down: the session, else the guard.
   function adjust(minutes) {
-    if (hasSession) act(["adjust", String(minutes)])
-    else if (guardState === "timed") act(["focus", "adjust", String(minutes)])
+    if (hasSession) {
+      if (!openEnded) act(["adjust", String(minutes)])
+    } else if (guardState === "timed") act(["focus", "adjust", String(minutes)])
   }
 
   // Shape contract for shell summon/hide/toggle routing (see the weather
@@ -265,10 +272,15 @@ BarWidget {
     onTriggered: {
       root.nowMs = Date.now()
       // At zero the CLI must record the session and queue the break. A guard
-      // that reaches zero gets one refresh too: `ticking` goes false with it,
-      // so one that can't be released without root isn't polled every second.
-      if (root.hasSession && root.remaining <= 0) root.refresh()
-      else if (root.guardState === "expired") root.refresh()
+      // that reaches zero gets one refresh too, and only one: a session keeps
+      // this timer running, and a guard that can't be released without root
+      // stays expired. The heartbeat still checks on it.
+      var guardEnd = Model.expiredGuardEnd(root.state, root.nowMs)
+      if (root.hasSession && !root.openEnded && root.remaining <= 0) root.refresh()
+      else if (guardEnd > 0 && guardEnd !== root.refreshedGuardEnd) {
+        root.refreshedGuardEnd = guardEnd
+        root.refresh()
+      }
     }
   }
 
@@ -358,7 +370,7 @@ BarWidget {
     }
 
     onWheelMoved: function(delta) {
-      if (!root.hasSession && root.guardState !== "timed") return
+      if (root.openEnded || (!root.hasSession && root.guardState !== "timed")) return
       var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
       root.wheelAccumulator = wheel.remainder
       if (wheel.steps === 0) return
@@ -369,7 +381,7 @@ BarWidget {
 
   // Session progress as a hairline under the pill.
   Rectangle {
-    visible: root.hasSession && !root.vertical
+    visible: root.hasSession && !root.openEnded && !root.vertical
     anchors.left: button.left
     anchors.bottom: button.bottom
     anchors.leftMargin: Style.space(6)

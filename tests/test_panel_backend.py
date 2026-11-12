@@ -202,12 +202,100 @@ class AdjustGuardTest(PanelTestCase):
             self.focus.adjust(5)
 
 
+class OpenEndedSessionTest(PanelTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.t0 = utc_now()
+
+    def at(self, minutes: float):
+        return patch(
+            "omarchy_focus.services.pomodoro.utc_now", return_value=self.t0 + timedelta(minutes=minutes)
+        )
+
+    def recorded(self):
+        return self.db.fetchall("SELECT duration_seconds, completed, interrupted FROM pomodoro_sessions")
+
+    def test_counts_up_without_an_end(self) -> None:
+        with self.at(0):
+            snapshot = self.pomodoro.start(open_ended=True, auto_focus=False)
+        self.assertTrue(snapshot.open_ended)
+        self.assertIsNone(snapshot.ends_at)
+        self.assertEqual(snapshot.total_seconds, 0)
+        # Hours later it is still running: nothing ends it but a stop.
+        with self.at(300):
+            self.assertEqual(self.pomodoro.tick().phase, SessionPhase.RUNNING)
+        self.assertEqual(self.recorded(), [])
+
+    def test_saved_length_zero_starts_without_a_timer(self) -> None:
+        self.settings.set("pomodoro_work_minutes", 0)
+        self.assertTrue(self.pomodoro.start(auto_focus=False).open_ended)
+        # An explicit length still wins.
+        self.assertFalse(self.pomodoro.start(minutes=25, auto_focus=False).open_ended)
+
+    def test_stopping_records_a_finished_session(self) -> None:
+        with self.at(0):
+            self.pomodoro.start(open_ended=True, auto_focus=False)
+        with self.at(10):
+            self.pomodoro.pause()
+        with self.at(15):
+            self.pomodoro.resume()
+            self.assertIsNone(self.pomodoro.snapshot().ends_at)
+        with self.at(42):
+            self.pomodoro.stop()
+        [row] = self.recorded()
+        self.assertEqual((row["duration_seconds"], row["completed"], row["interrupted"]), (37 * 60, 1, 0))
+        # No break is queued: the user decided when to stop.
+        self.assertIsNone(self.pomodoro.pending_break())
+
+    def test_a_misclick_is_not_focus_time(self) -> None:
+        with self.at(0):
+            self.pomodoro.start(open_ended=True, auto_focus=False)
+        with self.at(0.5):
+            self.pomodoro.stop()
+        [row] = self.recorded()
+        self.assertEqual((row["completed"], row["interrupted"]), (0, 1))
+
+    def test_has_no_timer_to_change(self) -> None:
+        self.pomodoro.start(open_ended=True, auto_focus=False)
+        with self.assertRaises(PomodoroError):
+            self.pomodoro.adjust(5)
+
+    def test_guard_stays_on_until_the_session_stops(self) -> None:
+        self.settings.set("strict_mode_default", True)
+        with patch.object(self.focus, "start") as start_guard:
+            snapshot = self.pomodoro.start(open_ended=True, auto_focus=True)
+        start_guard.assert_called_once_with(minutes=None, strict_mode=False)
+        self.assertFalse(snapshot.strict_focus)
+
+    def test_payload_carries_what_the_panel_counts_from(self) -> None:
+        with self.at(0):
+            self.pomodoro.start(open_ended=True, auto_focus=False)
+        with (
+            self.at(7),
+            patch.object(ServiceContainer, "sync", return_value=None),
+            patch("omarchy_focus.bar.poke_status_bar"),
+        ):
+            state = build_state_payload(self.services, heatmap_days=7)["pomodoro"]
+        self.assertTrue(state["open_ended"])
+        self.assertIsNone(state["ends_at_ms"])
+        self.assertEqual(state["started_at_ms"], int(self.t0.timestamp() * 1000))
+        self.assertEqual(state["elapsed_seconds"], 7 * 60)
+
+    def test_cli_takes_open_ended_or_minutes_not_both(self) -> None:
+        with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(["start", "--open-ended", "--minutes", "5"])
+        self.assertTrue(cli.build_parser().parse_args(["start", "--open-ended"]).open_ended)
+
+
 class SettingsValidationTest(PanelTestCase):
     def test_values_are_checked(self) -> None:
         self.settings.set("pomodoro_work_minutes", 25)
         self.assertEqual(self.settings.get("pomodoro_work_minutes"), 25)
+        self.settings.set("pomodoro_work_minutes", 0)  # no timer
+        self.assertEqual(self.settings.get("pomodoro_work_minutes"), 0)
         for key, value in (
-            ("pomodoro_work_minutes", 0),
+            ("pomodoro_work_minutes", -1),
+            ("pomodoro_work_minutes", 721),
             ("pomodoro_work_minutes", "soon"),
             ("notifications_enabled", 1),
             ("no_such_setting", 1),
@@ -340,7 +428,7 @@ class ArgsFromStdinTest(PanelTestCase):
         code, _, err = self.run_stdin("adjust", "5")
         self.assertEqual(code, 1)
         self.assertIn("No session", err)
-        code, _, err = self.run_stdin("settings", "set", "pomodoro_work_minutes", "0")
+        code, _, err = self.run_stdin("settings", "set", "pomodoro_work_minutes", "721")
         self.assertEqual(code, 1)
         self.assertIn("between", err)
 
@@ -398,8 +486,8 @@ class WidgetFilesTest(unittest.TestCase):
 
 
 KNOWN_TYPES = {
-    "BarWidget", "Canvas", "Column", "FileView", "Flickable", "HoverHandler", "Item", "KeyboardPanel",
-    "Loader", "MouseArea", "NumberAnimation", "PanelKeyCatcher", "Process", "Rectangle", "Repeater", "Row",
+    "BarWidget", "Canvas", "Column", "Connections", "FileView", "Flickable", "HoverHandler", "Item", "KeyboardPanel",
+    "Loader", "MouseArea", "NumberAnimation", "OpticalGlyph", "PanelKeyCatcher", "Process", "Rectangle", "Repeater", "Row",
     "ShellIpc", "StdioCollector", "Text", "Tile", "Timer", "WidgetButton", "Behavior",
 }  # fmt: skip
 

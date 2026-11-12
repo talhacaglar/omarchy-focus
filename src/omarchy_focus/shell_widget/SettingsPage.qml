@@ -22,9 +22,11 @@ Column {
     label: page.ctx.t("settings.work")
     Stepper {
       ctx: page.ctx
+      // Also what the Focus page last picked; 0 is a session with no timer.
       value: page.values ? page.values.work_minutes : 50
-      from: 5; to: 240; step: 5
-      text: page.ctx.dur(shown)
+      editable: true
+      from: 0; to: 720; step: 5; fineBelow: 5
+      text: shown === 0 ? page.ctx.t("timer.openEnded") : page.ctx.dur(shown)
       onChanged: function(value) { page.set("pomodoro_work_minutes", value) }
     }
   }

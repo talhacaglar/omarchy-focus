@@ -13,26 +13,42 @@ Column {
   readonly property var settings: model ? model.settings : null
   readonly property bool guardOn: ctx.guardState !== "off"
   readonly property bool isIdle: mode === "idle" || mode === "guard"
+  readonly property bool openEnded: Model.isOpenEnded(model)
+
+  // The length picked here is saved as the session length, so the start
+  // button, a right-click on the pill and the CLI all use the last pick.
+  // 0 is no timer: it runs until stopped.
+  readonly property int savedMinutes: settings ? settings.work_minutes : 50
+  // Shows a pick at once, until the saved value catches up.
+  property int plannedMinutes: -1
+  onSavedMinutesChanged: plannedMinutes = -1
 
   // Unset until touched, so they follow the settings until then.
-  property int plannedMinutes: 0
   property int plannedBreak: 0
   property var guardChoice: null
 
-  readonly property int startMinutes: plannedMinutes > 0 ? plannedMinutes : (settings ? settings.work_minutes : 50)
+  readonly property int startMinutes: plannedMinutes >= 0 ? plannedMinutes : savedMinutes
   readonly property int breakMinutes: plannedBreak > 0 ? plannedBreak : (model && model.pending_break ? model.pending_break.minutes : 0)
   readonly property bool withGuard: guardChoice === null ? !!(settings && settings.focus_on_pomodoro_start) : guardChoice
 
   spacing: Style.space(14)
 
   function start(taskId) {
+    // A length typed in but not confirmed with Enter still counts.
+    lengthStepper.commitEdit()
     ctx.host.act(Model.startArgs(taskId, startMinutes, guardOn ? null : withGuard))
-    plannedMinutes = 0
     guardChoice = null
+  }
+
+  function choose(minutes) {
+    if (minutes === startMinutes) return
+    plannedMinutes = minutes
+    ctx.host.act(Model.settingArgs("pomodoro_work_minutes", minutes))
   }
 
   function ringCenterText() {
     if (!model) return "—"
+    if (openEnded) return Model.clock(Model.elapsed(model, ctx.nowMs))
     if (ctx.hasSession) return Model.clock(Model.remaining(model, ctx.nowMs))
     if (mode === "break-ready") return ctx.dur(breakMinutes)
     if (ctx.guardState === "timed") return Model.clock(Model.focusRemaining(model, ctx.nowMs))
@@ -40,8 +56,12 @@ Column {
   }
 
   function ringProgress() {
-    if (ctx.hasSession) return Model.progress(model, ctx.nowMs)
-    return ctx.stats ? Math.min(1, ctx.stats.today_focus_minutes / ctx.goal) : 0
+    if (ctx.hasSession && !openEnded) return Model.progress(model, ctx.nowMs)
+    if (!ctx.stats) return 0
+    // A session with no timer has no length to fill: the ring shows the day's goal,
+    // with its minutes counted in as they pass.
+    var running = openEnded ? Model.elapsed(model, ctx.nowMs) / 60 : 0
+    return Math.min(1, (ctx.stats.today_focus_minutes + running) / ctx.goal)
   }
 
   function subtitle() {
@@ -147,6 +167,7 @@ Column {
     Row {
       anchors.horizontalCenter: parent.horizontalCenter
       spacing: Style.space(6)
+      visible: !page.openEnded
 
       Repeater {
         model: [-5, -1, 1, 5]
@@ -214,17 +235,37 @@ Column {
           ctx: page.ctx
           text: modelData + page.ctx.t("unit.m")
           selected: page.startMinutes === modelData
-          onClicked: page.plannedMinutes = modelData
+          onClicked: page.choose(modelData)
         }
       }
-      Stepper {
+    }
+
+    // No timer, or any length: type it in the box, or step it.
+    Row {
+      anchors.horizontalCenter: parent.horizontalCenter
+      spacing: Style.space(6)
+
+      Chip {
         ctx: page.ctx
+        anchors.verticalCenter: parent.verticalCenter
+        iconText: "󰖉"
+        text: page.ctx.t("timer.openEnded")
+        tooltipText: page.ctx.t("timer.openEndedHint")
+        selected: page.startMinutes === 0
+        onClicked: page.choose(0)
+      }
+      Stepper {
+        id: lengthStepper
+        ctx: page.ctx
+        anchors.verticalCenter: parent.verticalCenter
+        editable: true
         value: page.startMinutes
-        from: 5
-        to: 240
+        from: 1
+        to: 720
         step: 5
-        text: page.ctx.dur(shown)
-        onChanged: function(value) { page.plannedMinutes = value }
+        fineBelow: 5
+        text: shown > 0 ? page.ctx.dur(shown) : "—"
+        onChanged: function(value) { page.choose(value) }
       }
     }
 
@@ -241,7 +282,7 @@ Column {
       ctx: page.ctx
       anchors.horizontalCenter: parent.horizontalCenter
       iconText: "󰐊"
-      text: page.ctx.t("timer.start").arg(page.ctx.dur(page.startMinutes))
+      text: page.startMinutes > 0 ? page.ctx.t("timer.start").arg(page.ctx.dur(page.startMinutes)) : page.ctx.t("timer.startOpenEnded")
       selected: true
       fontSize: Style.font.body
       horizontalPadding: Style.space(18)
