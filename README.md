@@ -13,7 +13,7 @@ Pomodoro timer, task queue and a reversible site blocker that live in the [Omarc
 ### What you get
 
 - **The whole app in one bar panel.** A live countdown in the bar with a progress hairline. Click it for five pages: Focus, Tasks, Sites, Stats and Settings. It follows your Omarchy theme and language, with English and Turkish included.
-- **Change the time as you go.** Add or take away minutes while a session runs or sits paused, or scroll on the pill. Pick the length before you start, and the length of the break it earns.
+- **Change the time as you go.** Add or take away minutes while a session runs or sits paused, or scroll on the pill. Pick the length before you start, or type any number of minutes (it sticks until you pick another), or **No timer** to count up until you stop, and the length of the break it earns.
 - **Tasks.** Add one in a line, or with description, priority, estimate, tags and a due date. Filter by open, today, done and archive, search, sort, start a session on a task, or point the running session at another one without losing its time.
 - **Site guard.** Blocks distracting sites through a marked, reversible block in `/etc/hosts`, with strict mode and crash recovery. Add, rename, switch off or remove sites in the panel. It asks for your password through Omarchy's polkit dialog, or never asks with `--system-helper`.
 - **Stats that mean something.** Daily goal, streaks, finished vs. abandoned sessions, a 12-week heatmap, your peak focus hours, top tasks and most-blocked sites, in the panel and in `omarchy-focus stats`.
@@ -72,7 +72,7 @@ Screenshots use a generated demo database (`scripts/demo_data.py`), not personal
 ### Neler var
 
 - **Tek panelde tüm uygulama.** Çubukta canlı geri sayım ve ince ilerleme çizgisi. Tıklayınca beş sayfa açılır: Odak, Görevler, Siteler, İstatistik ve Ayarlar. Omarchy temanızı ve dilinizi izler; İngilizce ve Türkçe hazır gelir.
-- **Süreyi yolda değiştirin.** Oturum sürerken ya da duraklatılmışken dakika ekleyip çıkarın, ya da sayaç üzerinde tekerleği çevirin. Başlamadan önce süreyi, oturum bitince de mola süresini seçin.
+- **Süreyi yolda değiştirin.** Oturum sürerken ya da duraklatılmışken dakika ekleyip çıkarın, ya da sayaç üzerinde tekerleği çevirin. Başlamadan önce süreyi seçin ya da istediğiniz dakikayı yazın (bir dahaki sefere de o gelir), isterseniz siz bitirene kadar sayan **Süresiz** odağı seçin; oturum bitince de mola süresini belirleyin.
 - **Görevler.** Tek satırda ya da açıklama, öncelik, tahmini süre, etiket ve son tarihle ekleyin. Açık, bugün, biten ve arşiv olarak süzün, arayın, sıralayın, görevle oturum başlatın ya da süren oturumu süresini kaybetmeden başka bir göreve bağlayın.
 - **Site engeli.** Dikkat dağıtan siteleri `/etc/hosts` içinde işaretli ve geri alınabilir bir blokla engeller; katı mod ve çökme kurtarma içerir. Siteleri panelden ekleyin, düzenleyin, kapatın, kaldırın. Şifreyi Omarchy'nin polkit penceresiyle sorar; `--system-helper` ile hiç sormaz.
 - **Anlamlı istatistikler.** Günlük hedef, seri, tamamlanan/yarım bırakılan oturumlar, 12 haftalık ısı haritası, en verimli saatler, en çok çalışılan görevler ve en çok engellenen siteler; panelde ve `omarchy-focus stats` çıktısında.

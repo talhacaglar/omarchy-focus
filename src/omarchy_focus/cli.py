@@ -16,6 +16,7 @@ from .bootstrap import build_services
 from .exceptions import FocusModeError, OmarchyFocusError, PomodoroError, TaskNotFoundError
 from .models import TaskFilters, TaskPriority, TaskStatus
 from .paths import APP_NAME
+from .services.pomodoro import session_elapsed_seconds
 from .utils import (
     format_datetime,
     minutes_to_label,
@@ -54,7 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     start_parser = subparsers.add_parser("start")
     start_parser.add_argument("--task-id", type=int)
-    start_parser.add_argument("--minutes", type=int)
+    length_group = start_parser.add_mutually_exclusive_group()
+    length_group.add_argument("--minutes", type=int)
+    length_group.add_argument(
+        "--open-ended",
+        action="store_true",
+        help="No timer: count up until you stop it",
+    )
     focus_group = start_parser.add_mutually_exclusive_group()
     focus_group.add_argument(
         "--focus",
@@ -262,6 +269,10 @@ def _render_status(services: Any, *, as_json: bool = False) -> str:
     pending_break = services.pomodoro.pending_break()
     focus = services.focus.snapshot()
     pending = services.tasks.count_pending()
+    if pomodoro.open_ended and pomodoro.phase.value in {"running", "paused"}:
+        state = "Paused" if pomodoro.phase.value == "paused" else "Focus, no timer"
+        task_suffix = f" | {pomodoro.task_title}" if pomodoro.task_title else ""
+        return f"{state}: {seconds_to_clock(session_elapsed_seconds(pomodoro))} so far{task_suffix}"
     if pomodoro.phase.value == "running" and pomodoro.session_type:
         session_label = "Pomodoro" if pomodoro.session_type.value == "work" else "Break"
         task_suffix = f" | {pomodoro.task_title}" if pomodoro.task_title else ""
@@ -359,14 +370,19 @@ def main(argv: list[str] | None = None) -> int:
                 minutes=args.minutes,
                 auto_focus=args.focus,
                 strict_focus=args.strict,
+                open_ended=args.open_ended,
             )
-            print(
-                f"Started {snapshot.session_type.value if snapshot.session_type else 'session'} for {seconds_to_clock(snapshot.remaining_seconds)}"
-            )
+            if snapshot.open_ended:
+                print("Started a work session with no timer: stop it when you're done")
+            else:
+                print(f"Started work for {seconds_to_clock(snapshot.remaining_seconds)}")
             return 0
         if args.command == "pause":
             snapshot = services.pomodoro.pause()
-            print(f"Paused at {seconds_to_clock(snapshot.remaining_seconds)}")
+            if snapshot.open_ended:
+                print(f"Paused after {seconds_to_clock(session_elapsed_seconds(snapshot))}")
+            else:
+                print(f"Paused at {seconds_to_clock(snapshot.remaining_seconds)}")
             return 0
         if args.command == "resume":
             snapshot = services.pomodoro.resume()

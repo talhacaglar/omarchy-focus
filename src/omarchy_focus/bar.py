@@ -17,6 +17,7 @@ from .charts import peak_window
 from .focus_hosts_helper import SYSTEM_HELPER_PATH
 from .models import SessionPhase, SessionType, Task
 from .paths import APP_NAME, CHANGE_STAMP_PATH
+from .services.pomodoro import session_elapsed_seconds
 from .utils import local_now, poke_status_bar, progress_bar, remaining_seconds, seconds_to_clock
 
 # Bumped when the JSON consumed by the Omarchy Shell widget changes shape.
@@ -80,6 +81,12 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
             "cycle": pomodoro.cycle_count,
             "auto_focus": pomodoro.auto_focus,
             "strict_focus": pomodoro.strict_focus,
+            # A session with no timer counts up: elapsed is
+            # now - started_at_ms - paused_seconds while it runs.
+            "open_ended": pomodoro.open_ended,
+            "started_at_ms": _ms(pomodoro.started_at),
+            "paused_seconds": pomodoro.paused_seconds,
+            "elapsed_seconds": session_elapsed_seconds(pomodoro) if pomodoro.started_at else 0,
         },
         "pending_break": pending_break,
         "focus": {
@@ -151,6 +158,22 @@ def build_bar_payload(services: ServiceContainer) -> dict[str, Any]:
     focus = services.focus.snapshot()
     stats = services.stats.snapshot()
     pending = services.tasks.count_pending()
+
+    if pomodoro.open_ended and pomodoro.phase in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
+        elapsed = seconds_to_clock(session_elapsed_seconds(pomodoro))
+        paused = pomodoro.phase == SessionPhase.PAUSED
+        text = f"{'󰏤' if paused else '󰄉'} {elapsed}"
+        if pomodoro.task_title and not paused:
+            text += f" · {pomodoro.task_title[:20]}"
+        tooltip = "\n".join(
+            [
+                "Focus, no timer (paused)" if paused else "Focus, no timer",
+                f"Elapsed: {elapsed}",
+                f"Task: {pomodoro.task_title or 'Unassigned'}",
+                f"Pending tasks: {pending}",
+            ]
+        )
+        return {"text": text, "tooltip": tooltip, "class": ["active", "paused" if paused else "pomodoro"]}
 
     if pomodoro.phase == SessionPhase.RUNNING and pomodoro.session_type == SessionType.WORK:
         icon = "󰄉"

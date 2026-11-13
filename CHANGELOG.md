@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Type any length from 1 to 720 minutes on the Focus page: click the box between − and +, type, press Enter. Below 5 minutes − and + move one minute at a time. The **Focus session** setting takes typed values too.
+- Focus with no timer: a session that counts up until you stop it. Pick **No timer** on the Focus page, or `omarchy-focus start --open-ended`. Stopping it records it as finished (under a minute counts as a misclick), and a guard started with it stays on until then. It can't be lengthened or shortened, and it queues no break.
+
+### Changed
+- The length picked on the Focus page is saved as `pomodoro_work_minutes`, so the start button, a right-click on the pill and `omarchy-focus start` all use the last pick instead of falling back to the setting after every session. `0` means no timer.
+- `status --json` adds `open_ended`, `started_at_ms`, `paused_seconds` and `elapsed_seconds` under `pomodoro`.
+
+### Fixed
+- A guard that had run out but couldn't be released without root still made the widget run the CLI, and with it a failing `sudo`, every second while a session was running. The 0.3.0 fix only held while nothing else was counting down. It now tries once when the guard runs out, then leaves it to the heartbeat.
+
 ## 0.3.0 — 2026-11-05
 
 Everything now happens in the bar panel. The terminal app is gone.

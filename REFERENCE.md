@@ -62,7 +62,7 @@ IPC: `omarchy-shell omarchy-focus toggle|open|close|refresh`.
 
 ### `status --json`
 
-Schema `2`. Keys: `pomodoro` (`phase`, `type`, `remaining_seconds`, `total_seconds`, `ends_at_ms`, `task_id`, `task_title`, `cycle`, `auto_focus`, `strict_focus`), `pending_break`, `focus` (`active`, `strict`, `sites`, `ends_at_ms`, `consistent`), `stats` (`today_*`, `goal_minutes`, `week_*`, `streak_days`, `completion_rate`, `week[]`, `top_tasks[]`, `blocked_sites[]`, `hours[24]`, `peak_start`), `heatmap[]` (84 days), `next_tasks[]`, `tasks[]` (every open task, then the last 50 done and 50 archived), `sites[]`, `settings`, `passwordless_guard`. Keys from earlier schemas are kept.
+Schema `2`. Keys: `pomodoro` (`phase`, `type`, `remaining_seconds`, `total_seconds`, `ends_at_ms`, `task_id`, `task_title`, `cycle`, `auto_focus`, `strict_focus`, `open_ended`, `started_at_ms`, `paused_seconds`, `elapsed_seconds`), `pending_break`, `focus` (`active`, `strict`, `sites`, `ends_at_ms`, `consistent`), `stats` (`today_*`, `goal_minutes`, `week_*`, `streak_days`, `completion_rate`, `week[]`, `top_tasks[]`, `blocked_sites[]`, `hours[24]`, `peak_start`), `heatmap[]` (84 days), `next_tasks[]`, `tasks[]` (every open task, then the last 50 done and 50 archived), `sites[]`, `settings`, `passwordless_guard`. Keys from earlier schemas are kept.
 
 ## CLI
 
@@ -76,7 +76,7 @@ omarchy-focus tasks list [--today] [--completed] [--search text]
 omarchy-focus tasks edit 3 --status in_progress [--clear-estimate] [--clear-due]
 omarchy-focus tasks done 3 | delete 3
 
-omarchy-focus start [--task-id 3] [--minutes 25] [--focus | --no-focus] [--strict | --no-strict]
+omarchy-focus start [--task-id 3] [--minutes 25 | --open-ended] [--focus | --no-focus] [--strict | --no-strict]
 omarchy-focus pause | resume | stop | toggle
 omarchy-focus adjust 5                # more time in this session; -5 for less
 omarchy-focus assign --task-id 3      # keep the clock, change the task (or --clear)
@@ -96,7 +96,7 @@ omarchy-focus widget install | remove | path
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `pomodoro_work_minutes` | 50 | Work session length |
+| `pomodoro_work_minutes` | 50 | Work session length, and the last one picked in the panel. `0` is no timer: it runs until stopped |
 | `pomodoro_short_break_minutes` | 10 | Short break |
 | `pomodoro_long_break_minutes` | 25 | Long break |
 | `pomodoro_long_break_every` | 4 | Long break after this many sessions in a row (a 2 h gap starts a new cycle) |

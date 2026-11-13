@@ -78,6 +78,8 @@ class PomodoroStateSnapshot:
     cycle_count: int = 0
     auto_focus: bool = False
     strict_focus: bool = False
+    # No timer: no end time, it counts up until it is stopped.
+    open_ended: bool = False
 
 
 @dataclass(slots=True)

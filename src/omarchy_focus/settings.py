@@ -8,6 +8,8 @@ from typing import Any
 from .database import Database
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    # Also the length last picked in the panel. 0 is a session with no timer
+    # that runs until it is stopped.
     "pomodoro_work_minutes": 50,
     "pomodoro_short_break_minutes": 10,
     "pomodoro_long_break_minutes": 25,
@@ -30,9 +32,10 @@ RETIRED_SETTINGS = (
     "open_app_on_complete",
 )
 
-# Allowed range of each number. 0 turns off the long break and the daily goal.
+# Allowed range of each number. 0 turns off the long break and the daily goal,
+# and gives a work session no timer.
 SETTING_RANGES: dict[str, tuple[int, int]] = {
-    "pomodoro_work_minutes": (1, 720),
+    "pomodoro_work_minutes": (0, 720),
     "pomodoro_short_break_minutes": (1, 240),
     "pomodoro_long_break_minutes": (1, 240),
     "pomodoro_long_break_every": (0, 24),

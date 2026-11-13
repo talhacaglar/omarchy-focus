@@ -37,6 +37,23 @@ function remaining(state, nowMs) {
   return Math.max(0, p.remaining_seconds || 0)
 }
 
+// A work session with no timer: no end, it counts up until it is stopped.
+function isOpenEnded(state) {
+  if (!state || !state.pomodoro) return false
+  var p = state.pomodoro
+  return !!p.open_ended && (p.phase === "running" || p.phase === "paused")
+}
+
+// Seconds spent in the session, pauses left out. Counted locally while it runs.
+function elapsed(state, nowMs) {
+  if (!state || !state.pomodoro) return 0
+  var p = state.pomodoro
+  if (p.phase === "running" && p.started_at_ms) {
+    return Math.max(0, Math.floor((nowMs - p.started_at_ms) / 1000) - (p.paused_seconds || 0))
+  }
+  return Math.max(0, p.elapsed_seconds || 0)
+}
+
 function focusRemaining(state, nowMs) {
   if (!state || !state.focus || !state.focus.active || !state.focus.ends_at_ms) return 0
   return Math.max(0, Math.ceil((state.focus.ends_at_ms - nowMs) / 1000))
@@ -69,6 +86,13 @@ function guardState(state, nowMs) {
   return state.focus.ends_at_ms > nowMs ? "timed" : "expired"
 }
 
+// The end (ms) of a guard that ran out and is still up, else 0. The 1 s timer
+// asks the CLI to take it down once per end: one only root can take down stays
+// expired, and asking every second re-ran a failing sudo each time.
+function expiredGuardEnd(state, nowMs) {
+  return guardState(state, nowMs) === "expired" ? state.focus.ends_at_ms : 0
+}
+
 var ICONS = {
   idle: "󰔛",
   work: "󰄉",
@@ -85,6 +109,7 @@ function icon(state) {
 function pillText(state, nowMs, showIdleCount) {
   var m = mode(state)
   var glyph = ICONS[m]
+  if (isOpenEnded(state)) return glyph + " " + clock(elapsed(state, nowMs))
   if (m === "work" || m === "break" || m === "paused") return glyph + " " + clock(remaining(state, nowMs))
   if (m === "break-ready") return glyph + " " + (state.pending_break.minutes || 0) + "m?"
   if (m === "guard") {
@@ -97,7 +122,7 @@ function pillText(state, nowMs, showIdleCount) {
 
 function phaseLabel(state) {
   var m = mode(state)
-  if (m === "work") return "FOCUS"
+  if (m === "work") return isOpenEnded(state) ? "NO TIMER" : "FOCUS"
   if (m === "break") return state.pomodoro.type === "long_break" ? "LONG BREAK" : "BREAK"
   if (m === "paused") return "PAUSED"
   if (m === "break-ready") return "BREAK READY"
@@ -108,7 +133,7 @@ function phaseLabel(state) {
 // Catalog key for the phase label, so the panel can translate it.
 function phaseKey(state) {
   var m = mode(state)
-  if (m === "work") return "phase.focus"
+  if (m === "work") return isOpenEnded(state) ? "phase.openEnded" : "phase.focus"
   if (m === "break") return state.pomodoro.type === "long_break" ? "phase.longBreak" : "phase.break"
   if (m === "paused") return "phase.paused"
   if (m === "break-ready") return "phase.breakReady"
@@ -159,6 +184,16 @@ function priorityColor(priority, high, medium, low) {
 
 function clampInt(value, low, high) {
   return Math.max(low, Math.min(high, Math.round(value)))
+}
+
+// Where a stepper's − (direction -1) or + (1) goes from `value`: the next
+// multiple of `step`, so a typed 7 goes to 5 or 10, and steps of one below
+// `fineBelow`, so 5 minutes can still go down to 4.
+function stepValue(value, direction, step, fineBelow) {
+  var fine = direction > 0 ? value < fineBelow : value <= fineBelow
+  var size = fine ? 1 : Math.max(1, step)
+  if (direction > 0) return Math.floor(value / size) * size + size
+  return Math.ceil(value / size) * size - size
 }
 
 // ---- Tasks
@@ -258,10 +293,12 @@ function dayStartMs(nowMs) {
 // ---- CLI arguments. Values use --key=value (or follow --) so a title that
 // starts with a dash can't be read as an option.
 
+// `minutes` 0 is a session with no timer; leave it out (null) for the saved length.
 function startArgs(taskId, minutes, guard) {
   var args = ["start"]
   if (taskId) args.push("--task-id", String(taskId))
   if (minutes > 0) args.push("--minutes", String(minutes))
+  else if (minutes === 0) args.push("--open-ended")
   if (guard === true) args.push("--focus")
   else if (guard === false) args.push("--no-focus")
   return args
