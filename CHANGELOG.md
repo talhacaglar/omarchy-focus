@@ -6,11 +6,21 @@
 - Type any length from 1 to 720 minutes on the Focus page: click the box between − and +, type, press Enter. Below 5 minutes − and + move one minute at a time. The **Focus session** setting takes typed values too.
 - Focus with no timer: a session that counts up until you stop it. Pick **No timer** on the Focus page, or `omarchy-focus start --open-ended`. Stopping it records it as finished (under a minute counts as a misclick), and a guard started with it stays on until then. It can't be lengthened or shortened, and it queues no break.
 
+- A break ending has a chime too, and **Settings** has a switch for the sound (`sound_enabled`) with buttons to hear both. `omarchy-focus sound [session-end|break-end]` plays them from a terminal.
+
 ### Changed
+- The sound at the end of a session is no longer the system bell, a 0.14-second strike that made people jump mid-thought. It is a chime shipped with the app: three soft notes that fade in, stay under 700 Hz and peak around −10 dB. It plays through `pw-play`, then `paplay`, then `canberra-gtk-play`. `scripts/make_sounds.py` generates both chimes.
 - The length picked on the Focus page is saved as `pomodoro_work_minutes`, so the start button, a right-click on the pill and `omarchy-focus start` all use the last pick instead of falling back to the setting after every session. `0` means no timer.
 - `status --json` adds `open_ended`, `started_at_ms`, `paused_seconds` and `elapsed_seconds` under `pomodoro`.
 
 ### Fixed
+- A session that ran out could be recorded several times, with the sound played once for each: the bar, its heartbeat and a CLI call can all notice the end in the same second. Only the first one records it now. Stopping a session at the moment it runs out can't record it twice either.
+- Deleting a task while its session was running left a session that could not be stopped or finished: the record was refused, `status --json` failed and the bar froze. The time is now kept without the task.
+- `start --task-id` with a task that doesn't exist stopped the running session before failing. It now fails first.
+- `widget install` added a second widget to bars with sections of their own (`centerBegin`, `centerEnd`, ...), because it only looked in `left`, `center` and `right`.
+- A guard that had run out but needed a password to come down ran two refused `sudo` commands on every bar refresh, about four lines a minute in the system log for as long as it stayed up. It now tries once, then every ten minutes.
+- `start --minutes` above 720, a break shorter than nothing or longer than 240 minutes, a task estimate of zero or less and an unknown `tasks list --sort` are refused instead of accepted.
+- The CLI crashed where `pkill` or `sudo` is not installed.
 - A guard that had run out but couldn't be released without root still made the widget run the CLI, and with it a failing `sudo`, every second while a session was running. The 0.3.0 fix only held while nothing else was counting down. It now tries once when the guard runs out, then leaves it to the heartbeat.
 
 ## 0.3.0 — 2026-11-05

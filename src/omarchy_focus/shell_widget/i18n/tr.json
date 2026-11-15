@@ -144,5 +144,10 @@
   "settings.strictDefault": "Varsayılan olarak katı mod",
   "settings.autoRelease": "Süre dolunca engeli kaldır",
   "settings.notifications": "Bildirimler",
+  "settings.sound": "Süre bitince ses",
+  "settings.soundHint": "Oturum ya da mola bitince yumuşak, kısık bir çan sesi",
+  "settings.soundPreview": "Dinle",
+  "settings.soundSession": "Oturum",
+  "settings.soundBreak": "Mola",
   "settings.keys": "Süreyi çubuktaki sayaçta tekerlekle değiştir"
 }

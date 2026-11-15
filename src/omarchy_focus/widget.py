@@ -54,6 +54,12 @@ def _layout(config: dict[str, Any]) -> dict[str, list[Any]]:
     return layout
 
 
+def _sections(layout: dict[str, list[Any]]) -> list[str]:
+    """Every list in the layout. Shells and custom bars add their own sections
+    (centerBegin, centerEnd, ...) beside left, center and right."""
+    return [name for name, items in layout.items() if isinstance(items, list)]
+
+
 def _default_slot(layout: dict[str, list[Any]]) -> tuple[str, int]:
     """Right after the clock, else before the indicators, else at the end."""
     center = layout["center"]
@@ -68,14 +74,15 @@ def _default_slot(layout: dict[str, list[Any]]) -> tuple[str, int]:
 def update_shell_config(config: dict[str, Any], module: dict[str, Any]) -> bool:
     """Return True when the layout changed."""
     layout = _layout(config)
+    sections = _sections(layout)
     has_native = any(
         isinstance(item, dict) and item.get("id") == module.get("id")
-        for section in SECTIONS
+        for section in sections
         for item in layout[section]
     )
     first_legacy: tuple[str, int] | None = None
     removed = False
-    for section in SECTIONS:
+    for section in sections:
         kept: list[Any] = []
         for item in layout[section]:
             if is_legacy_entry(item):
@@ -151,14 +158,15 @@ def remove_widget() -> list[str]:
     if SHELL_CONFIG.exists():
         config = json.loads(SHELL_CONFIG.read_text(encoding="utf-8"))
         layout = _layout(config)
-        before = sum(len(layout[s]) for s in SECTIONS)
-        for section in SECTIONS:
+        sections = _sections(layout)
+        before = sum(len(layout[s]) for s in sections)
+        for section in sections:
             layout[section][:] = [
                 item
                 for item in layout[section]
                 if not (isinstance(item, dict) and item.get("id") == WIDGET_ID) and not is_legacy_entry(item)
             ]
-        if sum(len(layout[s]) for s in SECTIONS) != before:
+        if sum(len(layout[s]) for s in sections) != before:
             write_atomic(SHELL_CONFIG, config)
             messages.append("Removed from the bar layout")
     if PLUGIN_DIR.exists():

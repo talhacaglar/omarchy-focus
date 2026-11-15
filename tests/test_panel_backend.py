@@ -30,7 +30,7 @@ QUIET = (
     patch("omarchy_focus.services.pomodoro.poke_status_bar"),
     patch("omarchy_focus.services.focus.notify"),
     patch("omarchy_focus.services.focus.poke_status_bar"),
-    patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+    patch("omarchy_focus.services.pomodoro.play_chime"),
 )
 
 

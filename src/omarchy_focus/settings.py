@@ -15,6 +15,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pomodoro_long_break_minutes": 25,
     "pomodoro_long_break_every": 4,
     "notifications_enabled": True,
+    # The chime when a session or a break ends.
+    "sound_enabled": True,
     "strict_mode_default": False,
     "focus_auto_release": True,
     "focus_on_pomodoro_start": False,

@@ -17,6 +17,7 @@ Pomodoro timer, task queue and a reversible site blocker that live in the [Omarc
 - **Tasks.** Add one in a line, or with description, priority, estimate, tags and a due date. Filter by open, today, done and archive, search, sort, start a session on a task, or point the running session at another one without losing its time.
 - **Site guard.** Blocks distracting sites through a marked, reversible block in `/etc/hosts`, with strict mode and crash recovery. Add, rename, switch off or remove sites in the panel. It asks for your password through Omarchy's polkit dialog, or never asks with `--system-helper`.
 - **Stats that mean something.** Daily goal, streaks, finished vs. abandoned sessions, a 12-week heatmap, your peak focus hours, top tasks and most-blocked sites, in the panel and in `omarchy-focus stats`.
+- **A quiet end.** When the time is up you get a soft three-note chime, not a bell: it is made for someone who is concentrating. Hear it with `omarchy-focus sound`, switch it off in Settings.
 - **No polling.** The widget watches a change file with inotify and counts down locally. Bar updates are instant and cost nothing while idle.
 
 | Tasks | Sites | Stats |
@@ -76,6 +77,7 @@ Screenshots use a generated demo database (`scripts/demo_data.py`), not personal
 - **Görevler.** Tek satırda ya da açıklama, öncelik, tahmini süre, etiket ve son tarihle ekleyin. Açık, bugün, biten ve arşiv olarak süzün, arayın, sıralayın, görevle oturum başlatın ya da süren oturumu süresini kaybetmeden başka bir göreve bağlayın.
 - **Site engeli.** Dikkat dağıtan siteleri `/etc/hosts` içinde işaretli ve geri alınabilir bir blokla engeller; katı mod ve çökme kurtarma içerir. Siteleri panelden ekleyin, düzenleyin, kapatın, kaldırın. Şifreyi Omarchy'nin polkit penceresiyle sorar; `--system-helper` ile hiç sormaz.
 - **Anlamlı istatistikler.** Günlük hedef, seri, tamamlanan/yarım bırakılan oturumlar, 12 haftalık ısı haritası, en verimli saatler, en çok çalışılan görevler ve en çok engellenen siteler; panelde ve `omarchy-focus stats` çıktısında.
+- **Sakin bir bitiş.** Süre dolunca zil değil, üç notalık yumuşak bir çan çalar: odaklanmış birini ürkütmemek için yapıldı. `omarchy-focus sound` ile dinleyin, Ayarlar'dan kapatın.
 - **Sürekli sorgu yok.** Widget değişiklik dosyasını inotify ile izler, geri sayımı kendisi yapar. Çubuk anında güncellenir, boştayken kaynak harcamaz.
 
 ### Kurulum

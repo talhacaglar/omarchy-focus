@@ -30,7 +30,7 @@ from omarchy_focus.utils import local_now, to_iso, utc_now
 
 QUIET = (
     patch("omarchy_focus.services.pomodoro.notify"),
-    patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+    patch("omarchy_focus.services.pomodoro.play_chime"),
     patch("omarchy_focus.services.pomodoro.poke_status_bar"),
 )
 

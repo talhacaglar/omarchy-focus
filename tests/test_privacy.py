@@ -188,7 +188,7 @@ class NotificationContentTest(unittest.TestCase):
         self.focus = FocusService(self.db, self.settings)
         self.pomodoro = PomodoroService(self.db, self.settings, self.tasks, self.focus)
         for quiet in (
-            patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+            patch("omarchy_focus.services.pomodoro.play_chime"),
             patch("omarchy_focus.services.pomodoro.poke_status_bar"),
             patch("omarchy_focus.services.focus.poke_status_bar"),
         ):

@@ -78,6 +78,7 @@ omarchy-focus tasks done 3 | delete 3
 
 omarchy-focus start [--task-id 3] [--minutes 25 | --open-ended] [--focus | --no-focus] [--strict | --no-strict]
 omarchy-focus pause | resume | stop | toggle
+omarchy-focus sound [session-end | break-end]   # hear the chime
 omarchy-focus adjust 5                # more time in this session; -5 for less
 omarchy-focus assign --task-id 3      # keep the clock, change the task (or --clear)
 omarchy-focus break [start | skip] [--minutes 15]
@@ -106,6 +107,7 @@ omarchy-focus widget install | remove | path
 | `focus_auto_release` | true | Unblock sites when a timed guard ends |
 | `guard_minutes` | 50 | Length offered when starting the guard on its own |
 | `notifications_enabled` | true | Desktop notifications |
+| `sound_enabled` | true | A soft chime when a session or a break ends (`omarchy-focus sound` plays it) |
 
 ## Panel keys
 

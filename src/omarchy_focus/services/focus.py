@@ -31,6 +31,10 @@ from ..utils import json_dumps, parse_dt, poke_status_bar, remaining_seconds, to
 
 class FocusService:
     STATE_KEY = "focus.current"
+    # When releasing an expired guard last failed for want of root. It is tried
+    # again this often, not on every bar refresh: each refusal is logged by sudo.
+    RELEASE_FAILED_KEY = "focus.release_failed_at"
+    RELEASE_RETRY_AFTER = timedelta(minutes=10)
 
     def __init__(self, db: Database, settings: SettingsService) -> None:
         self.db = db
@@ -197,10 +201,20 @@ class FocusService:
         """
         if os.geteuid() == 0:
             return []
-        probe = subprocess.run(["sudo", "-n", *helper, "status", "--json"], check=False, capture_output=True)
-        if probe.returncode == 0 or not interactive:
+        sudo = shutil.which("sudo")
+        if not interactive:
+            # No probe first: the command itself fails the same way, and every
+            # refused attempt is a line in the system log.
+            if not sudo:
+                raise FocusModeError("Root access needed to change the hosts file, and sudo is not installed")
             return ["sudo", "-n"]
-        if sys.stdin.isatty():
+        if sudo:
+            probe = subprocess.run(
+                ["sudo", "-n", *helper, "status", "--json"], check=False, capture_output=True
+            )
+            if probe.returncode == 0:
+                return ["sudo", "-n"]
+        if sudo and sys.stdin.isatty():
             if subprocess.run(["sudo", "-v"], check=False).returncode != 0:
                 raise FocusModeError("sudo authentication failed")
             return ["sudo", "-n"]
@@ -308,7 +322,13 @@ class FocusService:
         self._update_active_session_record(snapshot)
         poke_status_bar()
 
+    def _release_failed_recently(self) -> bool:
+        row = self.db.get_state(self.RELEASE_FAILED_KEY)
+        failed_at = parse_dt(json.loads(row["value_json"]).get("at")) if row else None
+        return failed_at is not None and utc_now() - failed_at < self.RELEASE_RETRY_AFTER
+
     def _close_active_session(self, note: str = "") -> None:
+        self.db.delete_state(self.RELEASE_FAILED_KEY)
         raw = self._load_state()
         if not raw or not raw.get("session_id"):
             self.db.delete_state(self.STATE_KEY)
@@ -330,9 +350,12 @@ class FocusService:
         snapshot = self._snapshot_from_raw(self._load_state())
         if snapshot.active and check_expiry and snapshot.ends_at and remaining_seconds(snapshot.ends_at) <= 0:
             if snapshot.auto_release:
+                if self._release_failed_recently():
+                    return snapshot
                 try:
                     return self.stop(force=True, interactive=False, reason="Session expired")
                 except FocusModeError:
+                    self.db.upsert_state(self.RELEASE_FAILED_KEY, json_dumps({"at": to_iso(utc_now())}))
                     snapshot.system_consistent = inspect_hosts_file(DEFAULT_HOSTS_PATH).active
                     return snapshot
             snapshot.active = False
