@@ -17,7 +17,7 @@ from ..utils import (
     elapsed_seconds,
     json_dumps,
     parse_dt,
-    play_alert_sound,
+    play_chime,
     poke_status_bar,
     remaining_seconds,
     to_iso,
@@ -116,6 +116,7 @@ class PomodoroService:
     MAX_ADJUSTED_SECONDS = 12 * 3600
     # An open-ended session shorter than this was a misclick, not focus time.
     MIN_OPEN_ENDED_SECONDS = 60
+    MAX_BREAK_MINUTES = 240
 
     def _current_streak(self) -> int:
         row = self.db.get_state(self.STREAK_KEY)
@@ -202,6 +203,11 @@ class PomodoroService:
         """
         if minutes is not None and minutes < 0:
             raise PomodoroError("A session can't be shorter than nothing")
+        if minutes is not None and minutes * 60 > self.MAX_ADJUSTED_SECONDS:
+            raise PomodoroError(f"A session can't be longer than {self.MAX_ADJUSTED_SECONDS // 60} minutes")
+        # Looked up before anything changes: a task that is gone must not cost
+        # the session that is running.
+        task = self.tasks.get_task(task_id) if task_id else None
         current = self._raw_to_snapshot(self._load_raw())
         if current.phase in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
             self.stop(reason="restarted")
@@ -218,11 +224,10 @@ class PomodoroService:
         ends_at = None if open_ended else started_at + timedelta(minutes=duration_minutes)
         task_title = None
         self.clear_pending_break()
-        if task_id:
-            task = self.tasks.get_task(task_id)
+        if task:
             task_title = task.title
             if task.status == "pending":
-                self.tasks.update_task(task_id, status="in_progress")
+                self.tasks.update_task(task.id, status="in_progress")
 
         snapshot = PomodoroStateSnapshot(
             phase=SessionPhase.RUNNING,
@@ -265,6 +270,8 @@ class PomodoroService:
         return snapshot
 
     def start_break(self, *, minutes: int | None = None) -> PomodoroStateSnapshot:
+        if minutes is not None and not 0 <= minutes <= self.MAX_BREAK_MINUTES:
+            raise PomodoroError(f"A break is between 1 and {self.MAX_BREAK_MINUTES} minutes")
         current = self._raw_to_snapshot(self._load_raw())
         if current.phase in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
             self.stop(reason="break restarted")
@@ -394,6 +401,9 @@ class PomodoroService:
         if not raw:
             return PomodoroStateSnapshot()
         snapshot = self._raw_to_snapshot(raw)
+        if not self.db.claim_state(self.STATE_KEY, raw):
+            # It ran out, or was stopped, in another process a moment ago.
+            return PomodoroStateSnapshot()
         if snapshot.open_ended:
             # A session with no timer has no length to fall short of: stopping it is
             # how it finishes.
@@ -402,7 +412,6 @@ class PomodoroService:
             self._record_session(snapshot, completed=finished, interrupted=not finished, note=note)
         else:
             self._record_session(snapshot, completed=False, interrupted=True, note=reason)
-        self.db.delete_state(self.STATE_KEY)
         if snapshot.auto_focus and self.focus.status(check_expiry=False).active:
             with contextlib.suppress(Exception):
                 self.focus.stop(force=True, reason="Focus session ended with pomodoro")
@@ -433,13 +442,17 @@ class PomodoroService:
             # Nothing to persist: the countdown is derived from ends_at. Not
             # writing here keeps bar refreshes read-only.
             return snapshot
+        # The bar, the heartbeat and a CLI call can all land on the same second.
+        # Only the one that takes the state away records the session and rings.
+        if raw is None or not self.db.claim_state(self.STATE_KEY, raw):
+            return self._raw_to_snapshot(self._load_raw())
 
+        sound = bool(self.settings.get("sound_enabled"))
         if snapshot.session_type == SessionType.WORK:
             self._record_session(snapshot, completed=True, interrupted=False, note="work complete")
             streak = self._current_streak() + 1
             self._set_streak(streak)
             break_type, minutes = self._next_break(streak)
-            self.db.delete_state(self.STATE_KEY)
             self._save_pending_break(
                 {
                     "prompt_id": f"break-{utc_now().timestamp():.0f}",
@@ -460,17 +473,19 @@ class PomodoroService:
                 f"{minutes} minute {'long ' if break_type == SessionType.LONG_BREAK else ''}break is ready",
                 enabled=self.settings.get("notifications_enabled"),
             )
-            play_alert_sound()
+            if sound:
+                play_chime("session-end")
             poke_status_bar()
             return PomodoroStateSnapshot()
 
         self._record_session(snapshot, completed=True, interrupted=False, note="break complete")
-        self.db.delete_state(self.STATE_KEY)
         notify(
             "Break complete",
             "Ready for the next focus session",
             enabled=self.settings.get("notifications_enabled"),
         )
+        if sound:
+            play_chime("break-end")
         poke_status_bar()
         return PomodoroStateSnapshot()
 
@@ -490,6 +505,12 @@ class PomodoroService:
         elif snapshot.paused_at:
             effective_end = snapshot.paused_at
         duration = session_elapsed_seconds(snapshot, effective_end)
+        # A task deleted while its session ran: keep the time, drop the link.
+        # (The foreign key would otherwise refuse the row and the session could
+        # never be stopped.)
+        task_id = snapshot.task_id
+        if task_id is not None and not self.tasks.exists(task_id):
+            task_id = None
         self.db.execute(
             """
             INSERT INTO pomodoro_sessions (
@@ -498,7 +519,7 @@ class PomodoroService:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                snapshot.task_id,
+                task_id,
                 snapshot.session_type.value,
                 snapshot.phase.value,
                 to_iso(snapshot.started_at),

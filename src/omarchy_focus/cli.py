@@ -17,9 +17,12 @@ from .exceptions import FocusModeError, OmarchyFocusError, PomodoroError, TaskNo
 from .models import TaskFilters, TaskPriority, TaskStatus
 from .paths import APP_NAME
 from .services.pomodoro import session_elapsed_seconds
+from .services.tasks import TASK_SORTS
 from .utils import (
+    CHIMES,
     format_datetime,
     minutes_to_label,
+    play_chime,
     poke_status_bar,
     seconds_to_clock,
 )
@@ -97,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-place", action="store_true", help="Copy files but leave the bar layout alone"
     )
 
+    sound_parser = subparsers.add_parser(
+        "sound", help="Play a chime, to hear what the end of a session sounds like"
+    )
+    sound_parser.add_argument("name", choices=list(CHIMES), nargs="?", default="session-end")
+
     break_parser = subparsers.add_parser("break", help="Start or skip the break that is waiting")
     break_parser.add_argument("action", choices=["start", "skip"], nargs="?", default="start")
     break_parser.add_argument("--minutes", type=int)
@@ -129,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     tasks_list.add_argument("--status", choices=[item.value for item in TaskStatus])
     tasks_list.add_argument("--today", action="store_true")
     tasks_list.add_argument("--completed", action="store_true")
-    tasks_list.add_argument("--sort", default="updated_desc")
+    tasks_list.add_argument("--sort", choices=list(TASK_SORTS), default="updated_desc")
 
     tasks_done = tasks_subparsers.add_parser("done")
     tasks_done.add_argument("task_id", type=int)
@@ -354,6 +362,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("\n".join(messages))
         return 0
+
+    if args.command == "sound":
+        if play_chime(args.name):
+            return 0
+        print("Nothing to play it with: install pipewire (pw-play) or libcanberra", file=sys.stderr)
+        return 1
 
     services = build_services()
 

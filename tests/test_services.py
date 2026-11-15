@@ -149,7 +149,7 @@ class ServiceFlowTest(unittest.TestCase):
         with (
             patch("omarchy_focus.services.pomodoro.utc_now", return_value=started + timedelta(minutes=25)),
             patch("omarchy_focus.services.pomodoro.remaining_seconds", return_value=0),
-            patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+            patch("omarchy_focus.services.pomodoro.play_chime"),
         ):
             self.pomodoro.tick()
         row = self.db.fetchone("SELECT duration_seconds, completed FROM pomodoro_sessions")
@@ -169,7 +169,7 @@ class ServiceFlowTest(unittest.TestCase):
     def test_work_completion_creates_pending_break_prompt(self) -> None:
         task = self.tasks.add_task("Deep work")
         with (
-            patch("omarchy_focus.services.pomodoro.play_alert_sound") as play_sound,
+            patch("omarchy_focus.services.pomodoro.play_chime") as play_sound,
         ):
             self.pomodoro.start(task_id=task.id, minutes=1, auto_focus=False)
             raw = self.pomodoro._load_raw()
@@ -262,7 +262,7 @@ class ServiceFlowTest(unittest.TestCase):
         raw["remaining_seconds"] = 0
         self.pomodoro._save_raw(raw)
         with (
-            patch("omarchy_focus.services.pomodoro.play_alert_sound"),
+            patch("omarchy_focus.services.pomodoro.play_chime"),
         ):
             self.pomodoro.tick()
 

@@ -7,7 +7,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -130,44 +129,56 @@ def poke_status_bar() -> None:
     with contextlib.suppress(OSError):
         CHANGE_STAMP_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         CHANGE_STAMP_PATH.write_text(f"{utc_now().timestamp():.3f}\n", encoding="utf-8")
-    subprocess.run(["pkill", f"-RTMIN+{WAYBAR_SIGNAL}", "waybar"], check=False, capture_output=True)
+    # pkill may not be installed; the stamp above is what matters.
+    with contextlib.suppress(OSError):
+        subprocess.run(["pkill", f"-RTMIN+{WAYBAR_SIGNAL}", "waybar"], check=False, capture_output=True)
 
 
 # Compatibility for third-party code that imported the old helper.
 poke_waybar = poke_status_bar
 
 
-def play_alert_sound() -> None:
-    canberra = shutil.which("canberra-gtk-play")
-    if canberra:
-        subprocess.Popen(
-            [canberra, "-i", "bell", "-d", APP_NAME],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        return
+SOUNDS_DIR = Path(__file__).with_name("sounds")
+# The chimes this package ships (see scripts/make_sounds.py): soft, slow to
+# rise and quiet, because they go off while someone is concentrating.
+CHIMES = ("session-end", "break-end")
+# Tried in order. PipeWire first: it is what Omarchy runs.
+_PLAYERS: tuple[tuple[str, ...], ...] = (
+    ("pw-play",),
+    ("paplay",),
+    ("canberra-gtk-play", "-d", APP_NAME, "-f"),
+)
 
-    paplay = shutil.which("paplay")
-    if paplay:
-        for sample in (
-            Path("/usr/share/sounds/freedesktop/stereo/bell.oga"),
-            Path("/usr/share/sounds/freedesktop/stereo/complete.oga"),
-        ):
-            if sample.exists():
-                subprocess.Popen(
-                    [paplay, str(sample)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                return
 
-    try:
-        sys.stdout.write("\a")
-        sys.stdout.flush()
-    except Exception:
-        pass
+def chime_path(name: str) -> Path:
+    if name not in CHIMES:
+        raise ValueError(f"Unknown sound: {name} (one of: {', '.join(CHIMES)})")
+    return SOUNDS_DIR / f"{name}.oga"
+
+
+def play_chime(name: str = "session-end") -> bool:
+    """Play one of the bundled chimes without waiting for it. False if nothing could."""
+    sample = chime_path(name)
+    if not sample.exists():
+        return False
+    for player, *options in _PLAYERS:
+        binary = shutil.which(player)
+        if not binary:
+            continue
+        with contextlib.suppress(OSError):
+            subprocess.Popen(
+                [binary, *options, str(sample)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+    return False
+
+
+# Compatibility for third-party code that imported the old helper.
+play_alert_sound = play_chime
 
 
 def elapsed_seconds(start: datetime | None, end: datetime | None = None) -> int:

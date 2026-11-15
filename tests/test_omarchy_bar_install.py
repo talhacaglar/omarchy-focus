@@ -32,6 +32,20 @@ class OmarchyBarInstallTest(unittest.TestCase):
         self.assertEqual(config["bar"]["layout"]["left"], [{"id": "clar.workspaces"}])
         self.assertFalse(update_shell_config(config, MODULE))
 
+    def test_finds_the_widget_in_a_section_of_a_custom_bar(self) -> None:
+        """A bar with centerBegin/centerEnd got a second widget added to center."""
+        native = {"id": "omarchy-focus", "language": "tr"}
+        config = shell([{"id": "clar.clock"}], centerBegin=[{"id": "omarchy.indicators"}], centerEnd=[native])
+        self.assertFalse(update_shell_config(config, MODULE))
+        self.assertEqual(config["bar"]["layout"]["center"], [{"id": "clar.clock"}])
+        self.assertEqual(config["bar"]["layout"]["centerEnd"], [native])
+
+    def test_replaces_a_legacy_widget_in_a_custom_section(self) -> None:
+        config = shell([{"id": "clar.clock"}], centerEnd=[LEGACY])
+        self.assertTrue(update_shell_config(config, MODULE))
+        self.assertEqual(config["bar"]["layout"]["centerEnd"], [MODULE])
+        self.assertEqual(config["bar"]["layout"]["center"], [{"id": "clar.clock"}])
+
     def test_keeps_existing_native_entry_and_its_settings(self) -> None:
         native = {"id": "omarchy-focus", "showIdleCount": False}
         config = shell([{"id": "omarchy.clock"}], right=[native, {"id": "omarchy.tray"}])

@@ -12,7 +12,8 @@ checkdepends=('python-pytest')
 optdepends=(
   'polkit: password prompt for the site guard when started from the bar'
   'libnotify: desktop notifications'
-  'libcanberra: sound when a session ends'
+  'pipewire: chime when a session ends (pw-play)'
+  'libcanberra: chime when a session ends, without PipeWire'
 )
 install=omarchy-focus.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")

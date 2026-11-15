@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -195,6 +196,21 @@ class Database:
 
     def delete_state(self, key: str) -> None:
         self.execute("DELETE FROM app_state WHERE key = ?", (key,))
+
+    def claim_state(self, key: str, expected: dict[str, object]) -> bool:
+        """Delete the state under ``key`` if it still holds ``expected``.
+
+        True for exactly one caller when several processes race to finish the
+        same session.
+        """
+        with self.connection() as conn:
+            row = conn.execute("SELECT value_json FROM app_state WHERE key = ?", (key,)).fetchone()
+            if not row or json.loads(row["value_json"]) != expected:
+                return False
+            cursor = conn.execute(
+                "DELETE FROM app_state WHERE key = ? AND value_json = ?", (key, row["value_json"])
+            )
+            return cursor.rowcount == 1
 
     def get_state(self, key: str) -> sqlite3.Row | None:
         return self.fetchone("SELECT key, value_json, updated_at FROM app_state WHERE key = ?", (key,))

@@ -11,6 +11,16 @@ from ..models import Task, TaskFilters, TaskPriority, TaskStatus
 from ..notifications import notify
 from ..utils import coerce_tags, parse_dt, parse_user_datetime, to_iso, utc_now
 
+# `tasks list --sort` names and the ORDER BY each stands for.
+TASK_SORTS = {
+    "created_desc": "created_at DESC",
+    "updated_desc": "updated_at DESC",
+    "due_asc": "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC",
+    "priority_desc": "CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, updated_at DESC",
+    "title_asc": "title COLLATE NOCASE ASC",
+    "status": "status ASC, updated_at DESC",
+}
+
 
 class TaskService:
     def __init__(self, db: Database) -> None:
@@ -45,6 +55,8 @@ class TaskService:
     ) -> Task:
         if not title.strip():
             raise ValueError("Task title cannot be empty")
+        if estimated_minutes is not None and estimated_minutes <= 0:
+            raise ValueError("An estimate is a number of minutes above zero")
         now = utc_now()
         due = parse_user_datetime(due_at) if isinstance(due_at, str) else due_at
         tags_json = json.dumps(coerce_tags(tags))
@@ -78,6 +90,9 @@ class TaskService:
         if not row:
             raise TaskNotFoundError(f"Task {task_id} not found")
         return self._row_to_task(row)
+
+    def exists(self, task_id: int) -> bool:
+        return self.db.fetchone("SELECT 1 FROM tasks WHERE id = ?", (task_id,)) is not None
 
     def list_tasks(self, filters: TaskFilters | None = None) -> list[Task]:
         filters = filters or TaskFilters()
@@ -115,20 +130,7 @@ class TaskService:
             clauses.append("tags_json LIKE ?")
             params.append(f'%"{filters.tag.lower()}"%')
 
-        order_by = {
-            "created_desc": "created_at DESC",
-            "updated_desc": "updated_at DESC",
-            "due_asc": "CASE WHEN due_at IS NULL THEN 1 ELSE 0 END, due_at ASC",
-            "priority_desc": """
-                CASE priority
-                    WHEN 'high' THEN 0
-                    WHEN 'medium' THEN 1
-                    ELSE 2
-                END, updated_at DESC
-            """,
-            "title_asc": "title COLLATE NOCASE ASC",
-            "status": "status ASC, updated_at DESC",
-        }.get(filters.sort_by, "updated_at DESC")
+        order_by = TASK_SORTS.get(filters.sort_by, "updated_at DESC")
 
         sql = "SELECT * FROM tasks"
         if clauses:
@@ -151,6 +153,8 @@ class TaskService:
         clear_due_at: bool = False,
     ) -> Task:
         task = self.get_task(task_id)
+        if estimated_minutes is not None and estimated_minutes <= 0:
+            raise ValueError("An estimate is a number of minutes above zero")
         estimate = (
             None
             if clear_estimated_minutes

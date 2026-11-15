@@ -119,6 +119,32 @@ Column {
     checked: !!page.values && page.values.notifications_enabled
     onToggled: page.set("notifications_enabled", !checked)
   }
+  ToggleRow {
+    ctx: page.ctx
+    label: page.ctx.t("settings.sound")
+    description: page.ctx.t("settings.soundHint")
+    checked: !!page.values && page.values.sound_enabled
+    onToggled: page.set("sound_enabled", !checked)
+  }
+  SettingRow {
+    ctx: page.ctx
+    label: page.ctx.t("settings.soundPreview")
+    Row {
+      spacing: Style.space(6)
+      Chip {
+        ctx: page.ctx
+        iconText: "󰕾"
+        text: page.ctx.t("settings.soundSession")
+        onClicked: page.ctx.host.act(["sound", "session-end"])
+      }
+      Chip {
+        ctx: page.ctx
+        iconText: "󰕾"
+        text: page.ctx.t("settings.soundBreak")
+        onClicked: page.ctx.host.act(["sound", "break-end"])
+      }
+    }
+  }
 
   FocusText {
     ctx: page.ctx

@@ -15,7 +15,8 @@ pkgbase = omarchy-focus
 	depends = python-jeepney
 	optdepends = polkit: password prompt for the site guard when started from the bar
 	optdepends = libnotify: desktop notifications
-	optdepends = libcanberra: sound when a session ends
+	optdepends = pipewire: chime when a session ends (pw-play)
+	optdepends = libcanberra: chime when a session ends, without PipeWire
 	source = omarchy-focus-0.2.5.tar.gz::https://github.com/talhacaglar/omarchy-focus/archive/refs/tags/v0.2.5.tar.gz
 	sha256sums = 579884c1df22b067e8adca2e2490b7ddd9e1886b0342cc01f34cfac77b14b3eb
 

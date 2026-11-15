@@ -144,5 +144,10 @@
   "settings.strictDefault": "Strict by default",
   "settings.autoRelease": "Unblock when the time is up",
   "settings.notifications": "Notifications",
+  "settings.sound": "Chime when time is up",
+  "settings.soundHint": "A soft, quiet chime when a session or a break ends",
+  "settings.soundPreview": "Listen",
+  "settings.soundSession": "Session",
+  "settings.soundBreak": "Break",
   "settings.keys": "Scroll on the pill to change the time"
 }
