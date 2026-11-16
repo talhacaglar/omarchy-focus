@@ -107,6 +107,7 @@ omarchy-focus widget install | remove | path
 | `focus_auto_release` | true | Unblock sites when a timed guard ends |
 | `guard_minutes` | 50 | Length offered when starting the guard on its own |
 | `notifications_enabled` | true | Desktop notifications |
+| `silence_notifications` | true | Turn do-not-disturb on for the length of a work session (Omarchy Shell, or mako). Left alone if it was already on |
 | `sound_enabled` | true | A soft chime when a session or a break ends (`omarchy-focus sound` plays it) |
 
 ## Panel keys

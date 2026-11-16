@@ -143,6 +143,7 @@ def build_state_payload(services: ServiceContainer, *, heatmap_days: int = 84) -
             "guard_minutes": int(settings.get("guard_minutes")),
             "notifications_enabled": bool(settings.get("notifications_enabled")),
             "sound_enabled": bool(settings.get("sound_enabled")),
+            "silence_notifications": bool(settings.get("silence_notifications")),
             "focus_on_pomodoro_start": bool(settings.get("focus_on_pomodoro_start")),
             "strict_mode_default": bool(settings.get("strict_mode_default")),
             "focus_auto_release": bool(settings.get("focus_auto_release")),

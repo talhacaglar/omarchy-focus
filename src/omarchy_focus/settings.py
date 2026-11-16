@@ -15,6 +15,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pomodoro_long_break_minutes": 25,
     "pomodoro_long_break_every": 4,
     "notifications_enabled": True,
+    # Do-not-disturb for the length of a work session.
+    "silence_notifications": True,
     # The chime when a session or a break ends.
     "sound_enabled": True,
     "strict_mode_default": False,

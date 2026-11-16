@@ -6,9 +6,11 @@
 - Type any length from 1 to 720 minutes on the Focus page: click the box between − and +, type, press Enter. Below 5 minutes − and + move one minute at a time. The **Focus session** setting takes typed values too.
 - Focus with no timer: a session that counts up until you stop it. Pick **No timer** on the Focus page, or `omarchy-focus start --open-ended`. Stopping it records it as finished (under a minute counts as a misclick), and a guard started with it stays on until then. It can't be lengthened or shortened, and it queues no break.
 
+- Do-not-disturb while you focus: starting a work session turns the desktop's do-not-disturb on, and stopping or finishing it turns it back off, before "Pomodoro complete" is sent. Breaks are not silenced, and a do-not-disturb you turned on yourself is left on. **Settings** has a switch (`silence_notifications`, on by default). Works with Omarchy Shell and mako.
 - A break ending has a chime too, and **Settings** has a switch for the sound (`sound_enabled`) with buttons to hear both. `omarchy-focus sound [session-end|break-end]` plays them from a terminal.
 
 ### Changed
+- A work session stopped after at least 5 minutes counts toward focus time, for as long as it ran (pauses left out): today and week totals, the daily goal, the charts, the heatmap and the streak. It still isn't a completed pomodoro. Sessions recorded before this change count too. One cut short by a reboot doesn't, since when the machine went down isn't known.
 - The sound at the end of a session is no longer the system bell, a 0.14-second strike that made people jump mid-thought. It is a chime shipped with the app: three soft notes that fade in, stay under 700 Hz and peak around −10 dB. It plays through `pw-play`, then `paplay`, then `canberra-gtk-play`. `scripts/make_sounds.py` generates both chimes.
 - The length picked on the Focus page is saved as `pomodoro_work_minutes`, so the start button, a right-click on the pill and `omarchy-focus start` all use the last pick instead of falling back to the setting after every session. `0` means no timer.
 - `status --json` adds `open_ended`, `started_at_ms`, `paused_seconds` and `elapsed_seconds` under `pomodoro`.

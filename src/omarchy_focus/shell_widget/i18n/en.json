@@ -144,6 +144,8 @@
   "settings.strictDefault": "Strict by default",
   "settings.autoRelease": "Unblock when the time is up",
   "settings.notifications": "Notifications",
+  "settings.silence": "Do not disturb while focusing",
+  "settings.silenceHint": "Hides other apps' notifications until the session ends",
   "settings.sound": "Chime when time is up",
   "settings.soundHint": "A soft, quiet chime when a session or a break ends",
   "settings.soundPreview": "Listen",

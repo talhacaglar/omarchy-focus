@@ -10,7 +10,7 @@ from typing import Any
 from ..database import Database
 from ..exceptions import FocusModeError, PomodoroError
 from ..models import PomodoroStateSnapshot, SessionPhase, SessionType
-from ..notifications import notify
+from ..notifications import notify, silence_desktop, unsilence_desktop
 from ..settings import SettingsService
 from ..utils import (
     current_boot_id,
@@ -87,6 +87,7 @@ class PomodoroService:
             auto_focus=bool(raw.get("auto_focus", False)),
             strict_focus=bool(raw.get("strict_focus", False)),
             open_ended=bool(raw.get("open_ended", False)),
+            silenced=bool(raw.get("silenced", False)),
         )
 
     def _snapshot_to_raw(self, snapshot: PomodoroStateSnapshot) -> dict[str, Any]:
@@ -106,6 +107,7 @@ class PomodoroService:
             "auto_focus": snapshot.auto_focus,
             "strict_focus": snapshot.strict_focus,
             "open_ended": snapshot.open_ended,
+            "silenced": snapshot.silenced,
         }
 
     # A gap this long between finished work sessions starts a fresh cycle, so
@@ -178,6 +180,8 @@ class PomodoroService:
         if snapshot.phase in {SessionPhase.RUNNING, SessionPhase.PAUSED}:
             self._record_session(snapshot, completed=False, interrupted=True, note="system rebooted")
         self.db.delete_state(self.STATE_KEY)
+        # Do-not-disturb outlives a reboot; the session that asked for it didn't.
+        self._end_silence(snapshot)
         self.clear_pending_break()
         poke_status_bar()
         return PomodoroStateSnapshot()
@@ -266,8 +270,21 @@ class PomodoroService:
             else f"{duration_minutes} minute focus session",
             enabled=self.settings.get("notifications_enabled"),
         )
+        # After our own notification, which would otherwise be the first one hidden.
+        if self.settings.get("silence_notifications") and silence_desktop():
+            snapshot.silenced = True
+            try:
+                self._save_raw(self._snapshot_to_raw(snapshot))
+            except Exception:
+                unsilence_desktop()
+                raise
         poke_status_bar()
         return snapshot
+
+    def _end_silence(self, snapshot: PomodoroStateSnapshot) -> None:
+        """Turn do-not-disturb back off, if this session is what turned it on."""
+        if snapshot.silenced:
+            unsilence_desktop()
 
     def start_break(self, *, minutes: int | None = None) -> PomodoroStateSnapshot:
         if minutes is not None and not 0 <= minutes <= self.MAX_BREAK_MINUTES:
@@ -412,6 +429,7 @@ class PomodoroService:
             self._record_session(snapshot, completed=finished, interrupted=not finished, note=note)
         else:
             self._record_session(snapshot, completed=False, interrupted=True, note=reason)
+        self._end_silence(snapshot)
         if snapshot.auto_focus and self.focus.status(check_expiry=False).active:
             with contextlib.suppress(Exception):
                 self.focus.stop(force=True, reason="Focus session ended with pomodoro")
@@ -468,6 +486,8 @@ class PomodoroService:
             if snapshot.auto_focus and self.focus.status(check_expiry=False).active:
                 with contextlib.suppress(Exception):
                     self.focus.stop(force=True, interactive=False, reason="Work session complete")
+            # Before our own notification, so "Pomodoro complete" is seen.
+            self._end_silence(snapshot)
             notify(
                 "Pomodoro complete",
                 f"{minutes} minute {'long ' if break_type == SessionType.LONG_BREAK else ''}break is ready",
