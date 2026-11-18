@@ -54,7 +54,7 @@ The shell loads plugins from a `qs://` URL, where QML can't see sibling files as
 Set these on the widget's entry in `~/.config/omarchy/shell.json`:
 
 ```json
-{ "id": "omarchy-focus", "showIdleCount": true, "refreshIntervalSec": 30, "guardMinutes": 50,
+{ "id": "omarchy-focus", "showIdleCount": false, "refreshIntervalSec": 30, "guardMinutes": 50,
   "command": "/home/you/.local/bin/omarchy-focus" }
 ```
 
