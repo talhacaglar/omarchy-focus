@@ -80,6 +80,8 @@ class PomodoroStateSnapshot:
     strict_focus: bool = False
     # No timer: no end time, it counts up until it is stopped.
     open_ended: bool = False
+    # This session turned the desktop's do-not-disturb on, and turns it off.
+    silenced: bool = False
 
 
 @dataclass(slots=True)

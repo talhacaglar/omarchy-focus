@@ -23,7 +23,7 @@ BarWidget {
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ("/tmp/" + Quickshell.env("UID"))
   readonly property string cli: String(setting("command", "omarchy-focus"))
   readonly property int refreshSec: Math.max(10, parseInt(setting("refreshIntervalSec", 30), 10) || 30)
-  readonly property bool showIdleCount: setting("showIdleCount", true) !== false
+  readonly property bool showIdleCount: setting("showIdleCount", false) === true
 
   property var state: null
   // Split out of `state` and only replaced when they really change, so a

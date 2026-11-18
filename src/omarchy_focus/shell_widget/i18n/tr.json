@@ -144,6 +144,8 @@
   "settings.strictDefault": "Varsayılan olarak katı mod",
   "settings.autoRelease": "Süre dolunca engeli kaldır",
   "settings.notifications": "Bildirimler",
+  "settings.silence": "Odaklanırken rahatsız etme",
+  "settings.silenceHint": "Oturum bitene kadar diğer uygulamaların bildirimlerini gizler",
   "settings.sound": "Süre bitince ses",
   "settings.soundHint": "Oturum ya da mola bitince yumuşak, kısık bir çan sesi",
   "settings.soundPreview": "Dinle",

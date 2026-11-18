@@ -19,7 +19,7 @@
     "allowMultiple": false,
     "defaultSection": "center",
     "defaults": {
-      "showIdleCount": true,
+      "showIdleCount": false,
       "refreshIntervalSec": 30
     },
     "schema": [
@@ -27,7 +27,7 @@
         "key": "showIdleCount",
         "type": "boolean",
         "label": "Show open task count when idle",
-        "defaultValue": true
+        "defaultValue": false
       },
       {
         "key": "refreshIntervalSec",

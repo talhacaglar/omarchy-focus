@@ -121,6 +121,13 @@ Column {
   }
   ToggleRow {
     ctx: page.ctx
+    label: page.ctx.t("settings.silence")
+    description: page.ctx.t("settings.silenceHint")
+    checked: !!page.values && page.values.silence_notifications
+    onToggled: page.set("silence_notifications", !checked)
+  }
+  ToggleRow {
+    ctx: page.ctx
     label: page.ctx.t("settings.sound")
     description: page.ctx.t("settings.soundHint")
     checked: !!page.values && page.values.sound_enabled

@@ -10,6 +10,16 @@ from ..database import Database
 from ..models import StatsSnapshot
 from ..utils import local_now, start_of_day, start_of_week
 
+# A stopped work session counts toward focus time, for as long as it ran, once
+# it ran this long. Shorter ones were a false start, not focus.
+MIN_COUNTED_SECONDS = 5 * 60
+# Work sessions whose time is focus time: finished, or stopped after the
+# minimum. One cut short by a reboot is left out: when the machine went down
+# is not known, so its recorded length runs to the next boot.
+COUNTED = f"""session_type = 'work'
+              AND (completed = 1
+                   OR (duration_seconds >= {MIN_COUNTED_SECONDS} AND notes IS NOT 'system rebooted'))"""
+
 
 class StatsService:
     def __init__(self, db: Database) -> None:
@@ -26,21 +36,19 @@ class StatsService:
         week_iso = week.astimezone(UTC).isoformat()
 
         today_pomodoros = self.db.fetchone(
-            """
-            SELECT COUNT(*) AS count, COALESCE(SUM(duration_seconds), 0) AS total
+            f"""
+            SELECT COALESCE(SUM(completed), 0) AS count, COALESCE(SUM(duration_seconds), 0) AS total
             FROM pomodoro_sessions
-            WHERE session_type = 'work'
-              AND completed = 1
+            WHERE {COUNTED}
               AND started_at >= ?
             """,
             (today_iso,),
         )
         week_pomodoros = self.db.fetchone(
-            """
-            SELECT COALESCE(SUM(duration_seconds), 0) AS total, COUNT(*) AS count
+            f"""
+            SELECT COALESCE(SUM(duration_seconds), 0) AS total
             FROM pomodoro_sessions
-            WHERE session_type = 'work'
-              AND completed = 1
+            WHERE {COUNTED}
               AND started_at >= ?
             """,
             (week_iso,),
@@ -83,12 +91,11 @@ class StatsService:
         )
 
         top_rows = self.db.fetchall(
-            """
+            f"""
             SELECT COALESCE(tasks.title, 'Unassigned') AS title, SUM(duration_seconds) AS total
             FROM pomodoro_sessions
             LEFT JOIN tasks ON tasks.id = pomodoro_sessions.task_id
-            WHERE pomodoro_sessions.session_type = 'work'
-              AND pomodoro_sessions.completed = 1
+            WHERE {COUNTED}
               AND pomodoro_sessions.started_at >= ?
             GROUP BY pomodoro_sessions.task_id
             ORDER BY total DESC
@@ -99,11 +106,10 @@ class StatsService:
         top_task_focus = [(row["title"], int(row["total"] // 60)) for row in top_rows]
 
         day_rows = self.db.fetchall(
-            """
+            f"""
             SELECT date(started_at, 'localtime') AS day, SUM(duration_seconds) AS total
             FROM pomodoro_sessions
-            WHERE session_type = 'work'
-              AND completed = 1
+            WHERE {COUNTED}
               AND started_at >= ?
             GROUP BY date(started_at, 'localtime')
             ORDER BY day ASC
@@ -153,10 +159,10 @@ class StatsService:
         first = today - timedelta(days=days - 1)
         since = start_of_day(local_now() - timedelta(days=days - 1)).astimezone(UTC).isoformat()
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT date(started_at, 'localtime') AS day, SUM(duration_seconds) AS total
             FROM pomodoro_sessions
-            WHERE session_type = 'work' AND completed = 1 AND started_at >= ?
+            WHERE {COUNTED} AND started_at >= ?
             GROUP BY day
             """,
             (since,),
@@ -174,11 +180,11 @@ class StatsService:
         """Focus minutes by local hour of day over the last ``days`` days."""
         since = (local_now() - timedelta(days=days)).astimezone(UTC).isoformat()
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT CAST(strftime('%H', started_at, 'localtime') AS INTEGER) AS hour,
                    SUM(duration_seconds) AS total
             FROM pomodoro_sessions
-            WHERE session_type = 'work' AND completed = 1 AND started_at >= ?
+            WHERE {COUNTED} AND started_at >= ?
             GROUP BY hour
             """,
             (since,),
@@ -202,11 +208,10 @@ class StatsService:
 
     def _compute_streak(self) -> int:
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT DISTINCT date(started_at, 'localtime') AS day
             FROM pomodoro_sessions
-            WHERE session_type = 'work'
-              AND completed = 1
+            WHERE {COUNTED}
             ORDER BY day DESC
             """
         )
